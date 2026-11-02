@@ -1,0 +1,30 @@
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Backend
+backend/.venv/
+
+# Local environment files (keep shareable templates)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Test output
+coverage/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,29 @@
+:root {
+  --primary: #3157d5;
+  --primary-dark: #2445af;
+  --nav: #101a36;
+  --bg: #f4f6fb;
+  --surface: #fff;
+  --text: #17213b;
+  --muted: #68728a;
+  --danger: #b42318;
+  --border: #dfe4ee;
+  --radius: 12px;
+  --shadow: 0 4px 18px rgba(19, 33, 74, 0.08);
+  --space: 16px;
+  --header: 58px;
+  --sidebar: 190px;
+  font-family:
+    Inter,
+    Segoe UI,
+    Arial,
+    sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
