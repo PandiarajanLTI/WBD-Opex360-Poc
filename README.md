@@ -43,6 +43,11 @@ Browser → feature hooks/services → FastAPI routes → services → repositor
 2. **Forecast template**: metadata, KPI cards, editable AG Grid, insert five, duplicate, bulk actions, save, export, reset layout.
 3. **Budget maintenance**: schema-led editable/non-editable AG Grid view.
 
+Forecast and budget columns can be reordered, but dragging them outside the grid no longer
+hides them. Previously hidden Brand columns are restored when the template opens,
+preserving saved column order and widths. Use **Reset layout** to restore the
+complete default column layout.
+
 ## API endpoints
 - `GET /api/templates`
 - `GET /api/templates/{template_name}/metadata`

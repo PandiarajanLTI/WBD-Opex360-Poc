@@ -64,6 +64,7 @@ export default function BudgetPage() {
             rowData={rows}
             columnDefs={columns}
             defaultColDef={{ sortable: true, filter: true, resizable: true }}
+            suppressDragLeaveHidesColumns
             getRowId={({ data }) => data.COSTCENTER}
           />
         </div>

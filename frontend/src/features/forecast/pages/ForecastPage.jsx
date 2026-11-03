@@ -77,7 +77,13 @@ export default function ForecastPage() {
     ({ api }) => {
       gridRef.current = { api };
       const saved = loadColumnState(decodedName);
-      if (saved) api.applyColumnState({ state: saved, applyOrder: true });
+      if (saved) {
+        const state = saved.map((column) =>
+          column.colId === 'BRAND' ? { ...column, hide: false } : column,
+        );
+        api.applyColumnState({ state, applyOrder: true });
+        saveColumnState(decodedName, api.getColumnState());
+      }
     },
     [decodedName],
   );
@@ -223,6 +229,7 @@ export default function ForecastPage() {
             rowSelection={{ mode: 'multiRow' }}
             loading={isLoading}
             stopEditingWhenCellsLoseFocus
+            suppressDragLeaveHidesColumns
             onGridReady={handleGridReady}
             onCellValueChanged={handleCellValueChanged}
             onSelectionChanged={({ api }) =>
