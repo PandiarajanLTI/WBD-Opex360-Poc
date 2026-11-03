@@ -1,8 +1,10 @@
 from copy import deepcopy
 from typing import Any
 from app.schemas.grid import GridQuery
+BUDGET_EDITABLE_COLUMNS = {"FUNCTION","SUBFUNCTION","COE_TEAM","COE_SUB_TEAM","COE_POC","BU_POC","BUDGET_HOLDER","REGION","LOCATION","CITY","CUSTOM_1","CUSTOM_2","CUSTOM_3"}
 class MockForecastRepository:
     def __init__(self):
+        self.budget_overrides: dict[str, dict[str, Any]] = {}
         self.rows = [self._row(i, "Warner Media") for i in range(1, 351)] + [self._row(i + 1000, "EMEA Distribution") for i in range(1, 151)]
     @staticmethod
     def _row(index: int, template: str) -> dict[str, Any]:
@@ -26,4 +28,14 @@ class MockForecastRepository:
         return len(rows)
     def valid_combination(self, company_code, cost_center, profit_center): return bool(company_code and cost_center and profit_center)
     def budget_query(self, request):
-        rows = [{"COSTCENTER":f"C{i:03}","COSTCENTER_NAME":f"Cost Center {i}","COMPANY_CODE":"US01","PROFIT_CENTER":f"P{i%8:03}","FUNCTION":"Technology","SUBFUNCTION":"Engineering","BUDGET_HOLDER":"POC User","REGION":"Americas","LOCATION":"New York","CITY":"New York"} for i in range(1, 101)]; return rows[request.startRow:request.endRow], len(rows)
+        rows = [{"COSTCENTER":f"C{i:03}","COSTCENTER_NAME":f"Cost Center {i}","COMPANY_CODE":"US01","PROFIT_CENTER":f"P{i%8:03}","FUNCTION":"Technology","SUBFUNCTION":"Engineering","BUDGET_HOLDER":"POC User","REGION":"Americas","LOCATION":"New York","CITY":"New York"} for i in range(1, 101)]
+        # User-modified values win over the freshly loaded source data.
+        rows = [{**row, **self.budget_overrides.get(row["COSTCENTER"], {})} for row in rows]
+        return rows[request.startRow:request.endRow], len(rows)
+    def budget_save(self, rows):
+        for incoming in rows:
+            key = incoming.get("COSTCENTER")
+            if not key: continue
+            changes = {k: v for k, v in incoming.items() if k in BUDGET_EDITABLE_COLUMNS}
+            self.budget_overrides.setdefault(key, {}).update(changes)
+        return len(rows)

@@ -31,4 +31,5 @@ def export_rows(template_name: str, repository=Depends(get_repository)):
 def budget_query(request: GridQuery, repository=Depends(get_repository)):
     rows,total=repository.budget_query(request); return GridResponse(rows=rows,totalRowCount=total)
 @router.patch("/budget/bulk-update")
-def budget_bulk_update(payload: RowsPayload): return {"updated":len(payload.rows),"message":"Mock bulk update accepted."}
+def budget_bulk_update(payload: RowsPayload, repository=Depends(get_repository)):
+    count=repository.budget_save(payload.rows); return {"updated":count,"message":f"Saved {count} budget holder mapping row(s)."}

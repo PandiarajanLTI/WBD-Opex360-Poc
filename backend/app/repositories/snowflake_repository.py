@@ -28,3 +28,13 @@ class SnowflakeForecastRepository:
         table=self.settings.snowflake_mapping_table; rows=self._fetch(f"SELECT COUNT(*) AS TOTAL FROM {table} WHERE COMPANY_CODE=%(company)s AND COST_CENTER=%(cost)s AND PROFIT_CENTER=%(profit)s AND COALESCE(CLOSED,'NO') != 'YES'", {"company":company_code,"cost":cost_center,"profit":profit_center}); return rows[0]["TOTAL"] > 0
     def budget_query(self, request):
         columns="COSTCENTER, COSTCENTER_NAME, COMPANY_CODE, PROFIT_CENTER, FUNCTION, SUBFUNCTION, BUDGET_HOLDER, REGION, LOCATION, CITY"; rows=self._fetch(f"SELECT {columns} FROM {self.settings.snowflake_budget_table} LIMIT %(limit)s OFFSET %(offset)s", {"limit":request.endRow-request.startRow,"offset":request.startRow}); total=self._fetch(f"SELECT COUNT(*) AS TOTAL FROM {self.settings.snowflake_budget_table}", {})[0]["TOTAL"]; return rows,total
+    def budget_save(self, rows):
+        editable = {"FUNCTION","SUBFUNCTION","COE_TEAM","COE_SUB_TEAM","COE_POC","BU_POC","BUDGET_HOLDER","REGION","LOCATION","CITY","CUSTOM_1","CUSTOM_2","CUSTOM_3"}
+        with self.factory.connection() as connection:
+            cursor = connection.cursor()
+            for row in rows:
+                fields = [field for field in editable if field in row]
+                if not fields or not row.get("COSTCENTER"): continue
+                assignments = ", ".join(f"{field} = %({field})s" for field in fields); params = {field:row[field] for field in fields}; params["costcenter"] = row["COSTCENTER"]; cursor.execute(f"UPDATE {self.settings.snowflake_budget_table} SET {assignments} WHERE COSTCENTER = %(costcenter)s", params)
+            connection.commit()
+        return len(rows)

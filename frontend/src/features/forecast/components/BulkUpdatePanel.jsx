@@ -6,12 +6,17 @@ const BULK_EDITABLE_FIELDS = [
   { field: 'NOTES', label: 'Notes', type: 'text' },
 ];
 
-export default function BulkUpdatePanel({ selectedCount, onApply, onClose }) {
-  const [field, setField] = useState(BULK_EDITABLE_FIELDS[0].field);
+export default function BulkUpdatePanel({
+  selectedCount,
+  onApply,
+  onClose,
+  fields = BULK_EDITABLE_FIELDS,
+}) {
+  const [field, setField] = useState(fields[0].field);
   const [value, setValue] = useState('');
   const selectedField = useMemo(
-    () => BULK_EDITABLE_FIELDS.find((item) => item.field === field),
-    [field],
+    () => fields.find((item) => item.field === field),
+    [fields, field],
   );
 
   function handleSubmit(event) {
@@ -39,7 +44,7 @@ export default function BulkUpdatePanel({ selectedCount, onApply, onClose }) {
             value={field}
             onChange={(event) => setField(event.target.value)}
           >
-            {BULK_EDITABLE_FIELDS.map((item) => (
+            {fields.map((item) => (
               <option key={item.field} value={item.field}>
                 {item.label}
               </option>

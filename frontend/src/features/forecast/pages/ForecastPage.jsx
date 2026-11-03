@@ -10,6 +10,7 @@ import {
   normalizeMovedColumnState,
   saveColumnState,
 } from '../utils/columnState';
+import { applyPasteToGrid, parseClipboardText } from '../../shared/clipboard';
 const PAGE_SIZE = 100;
 export default function ForecastPage() {
   const { templateName = '' } = useParams();
@@ -164,6 +165,19 @@ export default function ForecastPage() {
       setMessage(e.message);
     }
   };
+  const handlePaste = (event) => {
+    if (['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return;
+    const api = gridRef.current?.api;
+    if (!api) return;
+    event.preventDefault();
+    const matrix = parseClipboardText(event.clipboardData.getData('text'));
+    const changed = applyPasteToGrid(api, matrix);
+    setMessage(
+      changed.length
+        ? `Pasted into ${changed.length} row(s). Save to persist the changes.`
+        : 'Nothing pasted. Focus an editable cell (Nov/Dec/Notes) first.',
+    );
+  };
   const resetLayout = () => {
     localStorage.removeItem(`opex360:grid:${decodedName}`);
     gridRef.current?.api.resetColumnState();
@@ -220,7 +234,7 @@ export default function ForecastPage() {
       {message && <div className="notice">{message}</div>}
       {error && <div className="error">{error}</div>}
       <div className="panel grid-panel">
-        <div className="ag-theme-quartz grid">
+        <div className="ag-theme-quartz grid" onPaste={handlePaste}>
           <AgGridReact
             rowData={rows}
             columnDefs={columnDefs}
