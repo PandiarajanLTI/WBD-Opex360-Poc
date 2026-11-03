@@ -21,6 +21,61 @@ output, local environment files, and editor settings. Commit source, tests, depe
 manifests and lockfiles, documentation, and `.env.example` templates; keep real credentials
 in ignored local environment files.
 
+### Snowflake connection
+
+The backend already supports Snowflake. Keep `DATA_REPOSITORY=mock` until the
+cross team confirms access and the required database objects.
+
+Configure the following values in `backend/.env`, using
+[`backend/.env.example`](backend/.env.example) as the template:
+
+```dotenv
+DATA_REPOSITORY=snowflake
+
+SNOWFLAKE_ACCOUNT=<account-identifier>
+SNOWFLAKE_USER=<username>
+SNOWFLAKE_PASSWORD=<password>
+SNOWFLAKE_WAREHOUSE=<warehouse>
+SNOWFLAKE_DATABASE=<database>
+SNOWFLAKE_SCHEMA=<schema>
+SNOWFLAKE_ROLE=<role>
+
+SNOWFLAKE_FORECAST_TABLE=FORECAST_TEMPLATE
+SNOWFLAKE_BUDGET_TABLE=BUDGET_TABLE
+SNOWFLAKE_MAPPING_TABLE=DIMENSION_MAPPING
+SNOWFLAKE_SUMMARY_TABLE=TEMPLATE_SUMMARY
+```
+
+Confirm these prerequisites with the cross team:
+
+- Account identifier, warehouse, database, schema, and approved role. The role
+  can be omitted if the user has a suitable default role.
+- Authentication method. The current connector uses username/password;
+  browser SSO, key-pair authentication, or other methods require code changes.
+  Confirm that password authentication is permitted by the account's policies.
+- Permissions: `USAGE` on the warehouse, database, and schema; `SELECT` on all
+  four tables; and `UPDATE` on the forecast table.
+- Actual table names and columns must match the queries in
+  [`snowflake_repository.py`](backend/app/repositories/snowflake_repository.py)
+  and [`query_builder.py`](backend/app/repositories/query_builder.py).
+- Any VPN, firewall, or Snowflake network-policy requirements.
+
+After configuration, restart the backend. From the workspace root on Windows:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
+```
+
+Starting from `backend` ensures the application loads `backend/.env`.
+Request `http://localhost:8000/api/templates` to verify authentication and access
+to the summary table, then verify the forecast and budget endpoints to check
+their table access. `/health` reports the selected repository but does **not**
+test Snowflake connectivity.
+
+Keep credentials only in the ignored local environment file, never in chat or
+Git. To return to mock data, set `DATA_REPOSITORY=mock` and restart the backend.
+
 ### Frontend
 ```bash
 cd frontend
