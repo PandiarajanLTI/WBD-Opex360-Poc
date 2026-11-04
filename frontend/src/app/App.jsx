@@ -28,16 +28,16 @@ export default function App() {
         </div>
       </header>
       <nav className="primary-nav" aria-label="Main navigation">
-        <span className="nav-placeholder" aria-disabled="true">
+        <span className="nav-placeholder" aria-disabled="true" style={{ display: 'none' }}>
           Review &amp; Enrich Actuals
         </span>
-        <span className="nav-placeholder" aria-disabled="true">
+        <span className="nav-placeholder" aria-disabled="true" style={{ display: 'none' }}>
           Accruals &amp; Reclasses
         </span>
-        <span className="nav-placeholder" aria-disabled="true">
+        <span className="nav-placeholder" aria-disabled="true" style={{ display: 'none' }}>
           Analyze Variances
         </span>
-        <span className="nav-placeholder" aria-disabled="true">
+        <span className="nav-placeholder" aria-disabled="true" style={{ display: 'none' }}>
           Reporting
         </span>
         <NavLink
@@ -50,7 +50,7 @@ export default function App() {
         >
           Build Forecasts
         </NavLink>
-        <span className="nav-placeholder" aria-disabled="true">
+        <span className="nav-placeholder" aria-disabled="true" style={{ display: 'none' }}>
           Track Tasks
         </span>
         <NavLink className="budget-nav-link" to="/budget">

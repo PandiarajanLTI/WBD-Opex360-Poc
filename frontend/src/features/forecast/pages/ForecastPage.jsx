@@ -552,6 +552,7 @@ export default function ForecastPage() {
               setMessage('EPM submission is not configured in this workspace.')
             }
             type="button"
+            style={{ display: 'none' }}
           >
             Summarize &amp; Submit to EPM
           </button>
