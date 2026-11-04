@@ -97,9 +97,7 @@ export default function App() {
         >
           Track Tasks
         </span>
-        <NavLink className="budget-nav-link" to="/budget">
-          Budget Mapping
-        </NavLink>
+        <NavLink to="/budget">Budget Holder</NavLink>
       </nav>
       <main>
         <Suspense fallback={<div className="panel">Loading…</div>}>

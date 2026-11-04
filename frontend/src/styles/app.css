@@ -418,9 +418,6 @@ main {
 .primary-nav a.active {
   border-bottom-color: #fff;
 }
-.primary-nav .budget-nav-link {
-  display: none;
-}
 main {
   padding: 17px 34px 32px;
 }
