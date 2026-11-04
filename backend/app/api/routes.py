@@ -2,10 +2,23 @@ import csv, io
 from fastapi import APIRouter, Depends, HTTPException, Response
 from app.api.dependencies import get_forecast_service, get_repository
 from app.schemas.grid import GridQuery, GridResponse, RowsPayload
+from app.schemas.templates import TemplateCreatePayload, TemplateUploadPayload
 from app.services.forecast_service import ForecastService
 router = APIRouter(prefix="/api")
 @router.get("/templates")
 def list_templates(repository=Depends(get_repository)): return repository.list_templates()
+@router.post("/templates", status_code=201, responses={409: {"description": "A template with that name already exists."}})
+def create_template(payload: TemplateCreatePayload, repository=Depends(get_repository)):
+    try:
+        return repository.create_templates([payload.model_dump()])[0]
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+@router.post("/templates/upload", status_code=201, responses={409: {"description": "A template with that name already exists."}})
+def upload_templates(payload: TemplateUploadPayload, repository=Depends(get_repository)):
+    try:
+        return {"created": repository.create_templates([item.model_dump() for item in payload.rows])}
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 @router.get("/templates/{template_name}/metadata")
 def metadata(template_name: str, repository=Depends(get_repository)): return repository.metadata(template_name)
 @router.post("/templates/{template_name}/rows/query", response_model=GridResponse)

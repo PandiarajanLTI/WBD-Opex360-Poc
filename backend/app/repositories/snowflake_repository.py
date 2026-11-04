@@ -10,6 +10,24 @@ class SnowflakeForecastRepository:
             cursor = connection.cursor(); cursor.execute(sql, params); columns = [item[0] for item in cursor.description]; return [dict(zip(columns, row)) for row in cursor.fetchall()]
     def list_templates(self):
         table = self.settings.snowflake_summary_table; rows = self._fetch(f"SELECT TEMPLATE_NAME, SECTION, VERSION, STATUS, CURRENT_FORECAST, PRIOR_FORECAST, VARIANCE FROM {table}", {}); return [{"templateName":r["TEMPLATE_NAME"],"section":r["SECTION"],"version":r["VERSION"],"status":r["STATUS"],"currentForecast":r["CURRENT_FORECAST"],"priorForecast":r["PRIOR_FORECAST"],"variance":r["VARIANCE"]} for r in rows]
+    def create_templates(self, templates):
+        existing = {item["templateName"].casefold() for item in self.list_templates()}
+        incoming_names = [item["templateName"].casefold() for item in templates]
+        if len(set(incoming_names)) != len(incoming_names) or existing.intersection(incoming_names):
+            raise ValueError("A template with this name already exists.")
+        table = self.settings.snowflake_summary_table
+        statement = (
+            f"INSERT INTO {table} "
+            "(TEMPLATE_NAME, SECTION, VERSION, STATUS, CURRENT_FORECAST, PRIOR_FORECAST, VARIANCE) "
+            "VALUES (%(templateName)s, %(section)s, %(version)s, %(status)s, "
+            "%(currentForecast)s, %(priorForecast)s, %(variance)s)"
+        )
+        with self.factory.connection() as connection:
+            cursor = connection.cursor()
+            for template in templates:
+                cursor.execute(statement, template)
+            connection.commit()
+        return templates
     def metadata(self, template_name):
         item = next(x for x in self.list_templates() if x["templateName"] == template_name); return {"templateName":template_name,"version":item["version"],"status":item["status"],"kpis":{"Current forecast":item["currentForecast"],"Prior forecast":item["priorForecast"],"Variance":item["variance"]}}
     def query(self, template_name, request):

@@ -6,12 +6,23 @@ class MockForecastRepository:
     def __init__(self):
         self.budget_overrides: dict[str, dict[str, Any]] = {}
         self.rows = [self._row(i, "Warner Media") for i in range(1, 351)] + [self._row(i + 1000, "EMEA Distribution") for i in range(1, 151)]
+        self.templates = [
+            {"templateName":"Warner Media","section":"Forecast","version":"10+2","status":"Working","currentForecast":2450000,"priorForecast":2380000,"variance":70000},
+            {"templateName":"EMEA Distribution","section":"Forecast","version":"10+2","status":"Working","currentForecast":1120000,"priorForecast":1090000,"variance":30000},
+        ]
     @staticmethod
     def _row(index: int, template: str) -> dict[str, Any]:
         amount = 1000 + index * 7
         return {"UNIQ_ID": index, "TEMPLATE_NAME": template, "VERSION": "10+2", "COMPANY_CODE": "US01", "PROFIT_CENTER": f"P{index % 8:03}", "COST_CENTER": f"C{index % 25:03}", "FSI_ACCOUNT": f"A{index % 12:03}", "GEOGRAPHY": "NA" if index % 2 else "EMEA", "BRAND": "Studio", "NOTES": "", **{f"{month}_FORECAST": amount for month in ("JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC")}, "FY_WORKING_FORECAST": amount * 12}
     def list_templates(self):
-        return [{"templateName":"Warner Media","section":"Forecast","version":"10+2","status":"Working","currentForecast":2450000,"priorForecast":2380000,"variance":70000},{"templateName":"EMEA Distribution","section":"Forecast","version":"10+2","status":"Working","currentForecast":1120000,"priorForecast":1090000,"variance":30000}]
+        return deepcopy(self.templates)
+    def create_templates(self, templates):
+        existing = {item["templateName"].casefold() for item in self.templates}
+        incoming_names = [item["templateName"].casefold() for item in templates]
+        if len(set(incoming_names)) != len(incoming_names) or existing.intersection(incoming_names):
+            raise ValueError("A template with this name already exists.")
+        self.templates.extend(deepcopy(templates))
+        return deepcopy(templates)
     def metadata(self, template_name):
         item = next((x for x in self.list_templates() if x["templateName"] == template_name), self.list_templates()[0]); return {"templateName": template_name, "version": item["version"], "status": item["status"], "kpis": {"Current forecast": item["currentForecast"], "Prior forecast": item["priorForecast"], "Variance": item["variance"]}}
     def query(self, template_name, request: GridQuery):

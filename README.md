@@ -54,7 +54,8 @@ Confirm these prerequisites with the cross team:
   browser SSO, key-pair authentication, or other methods require code changes.
   Confirm that password authentication is permitted by the account's policies.
 - Permissions: `USAGE` on the warehouse, database, and schema; `SELECT` on all
-  four tables; and `UPDATE` on the forecast table.
+  four tables; `UPDATE` on the forecast table; and `INSERT` on the summary table
+  for creating or uploading templates. Confirm the summary object is writable.
 - Actual table names and columns must match the queries in
   [`snowflake_repository.py`](backend/app/repositories/snowflake_repository.py)
   and [`query_builder.py`](backend/app/repositories/query_builder.py).
@@ -105,12 +106,16 @@ complete default column layout.
 
 ## API endpoints
 - `GET /api/templates`
+- `POST /api/templates` creates one forecast template.
+- `POST /api/templates/upload` imports 1–500 template records from a CSV payload.
 - `GET /api/templates/{template_name}/metadata`
 - `POST /api/templates/{template_name}/rows/query`
 - `POST /api/templates/{template_name}/rows/validate`
 - `POST /api/templates/{template_name}/rows/save`
 - `GET /api/templates/{template_name}/dimensions?parentField=&parentValue=`
 - `GET /api/templates/{template_name}/export`
+- CSV upload requires `Template Name` and `Version` headers. Optional headers are
+  `Section`, `Status`, `Current Forecast`, `Prior Forecast`, and `Variance`.
 - `POST /api/templates/{template_name}/actions/{action_name}`
 - `POST /api/budget/query`
 - `PATCH /api/budget/bulk-update`
