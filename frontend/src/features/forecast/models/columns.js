@@ -31,23 +31,26 @@ export function createForecastColumns() {
     pinned: 'left',
     lockPinned: false,
     suppressMovable: false,
-    editable: field === 'NOTES',
+    editable: ({ data }) => data?.INSERTED === 'Y' || field === 'NOTES',
+    filter: 'agTextColumnFilter',
     minWidth: field === 'NOTES' ? 220 : 130,
-    columnType: 'descriptor',
+    context: { columnType: 'descriptor' },
   }));
   const months = MONTH_COLUMNS.map((month) => ({
     field: `${month}_FORECAST`,
     headerName: month,
     colId: `${month}_FORECAST`,
-    editable: ['NOV', 'DEC'].includes(month),
+    editable: ({ data }) =>
+      data?.INSERTED === 'Y' || ['NOV', 'DEC'].includes(month),
+    filter: 'agNumberColumnFilter',
     type: 'numericColumn',
     valueParser: ({ newValue }) => (newValue === '' ? null : Number(newValue)),
     cellClassRules: {
-      'editable-cell': ({ colDef }) => colDef.editable === true,
+      'editable-cell': ({ data }) =>
+        data?.INSERTED === 'Y' || ['NOV', 'DEC'].includes(month),
     },
     minWidth: 110,
-    columnType: 'month',
-    monthOrder: MONTH_COLUMNS.indexOf(month),
+    context: { columnType: 'month', monthOrder: MONTH_COLUMNS.indexOf(month) },
   }));
   return [
     ...descriptor,
@@ -57,8 +60,9 @@ export function createForecastColumns() {
       headerName: 'FY Forecast',
       colId: 'FY_WORKING_FORECAST',
       type: 'numericColumn',
+      filter: 'agNumberColumnFilter',
       minWidth: 130,
-      columnType: 'summary',
+      context: { columnType: 'summary' },
     },
   ];
 }

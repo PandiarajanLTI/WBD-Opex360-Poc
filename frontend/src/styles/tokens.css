@@ -1,29 +1,33 @@
 :root {
-  --primary: #3157d5;
-  --primary-dark: #2445af;
-  --nav: #101a36;
-  --bg: #f4f6fb;
+  --primary: #4a6fe3;
+  --primary-dark: #3459cb;
+  --nav: #4d70e8;
+  --bg: #f2f4ff;
   --surface: #fff;
-  --text: #17213b;
-  --muted: #68728a;
+  --text: #20232d;
+  --muted: #858998;
   --danger: #b42318;
-  --border: #dfe4ee;
-  --radius: 12px;
-  --shadow: 0 4px 18px rgba(19, 33, 74, 0.08);
+  --border: #e2e5ef;
+  --accent: #f3d500;
+  --radius: 13px;
+  --shadow: 0 2px 8px rgba(38, 48, 94, 0.045);
   --space: 16px;
-  --header: 58px;
-  --sidebar: 190px;
+  --header: 54px;
+  --nav-height: 42px;
   font-family:
-    Inter,
     Segoe UI,
     Arial,
     sans-serif;
   color: var(--text);
   background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
 }
 * {
   box-sizing: border-box;
 }
 body {
   margin: 0;
+  min-width: 360px;
+  min-height: 100vh;
 }

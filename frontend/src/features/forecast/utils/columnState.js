@@ -2,7 +2,8 @@ export function getDefaultColumnState(columnDefinitions) {
   return columnDefinitions.map((column, index) => ({
     colId: column.colId,
     pinned:
-      column.columnType === 'month' || column.columnType === 'summary'
+      column.context?.columnType === 'month' ||
+      column.context?.columnType === 'summary'
         ? null
         : 'left',
     hide: false,

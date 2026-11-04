@@ -54,7 +54,8 @@ Confirm these prerequisites with the cross team:
   browser SSO, key-pair authentication, or other methods require code changes.
   Confirm that password authentication is permitted by the account's policies.
 - Permissions: `USAGE` on the warehouse, database, and schema; `SELECT` on all
-  four tables; and `UPDATE` on the forecast table.
+  four tables; `UPDATE` on the forecast table; and `INSERT` on the summary table
+  for creating or uploading templates. Confirm the summary object is writable.
 - Actual table names and columns must match the queries in
   [`snowflake_repository.py`](backend/app/repositories/snowflake_repository.py)
   and [`query_builder.py`](backend/app/repositories/query_builder.py).
@@ -91,11 +92,11 @@ cd frontend && npm run format:check && npm run lint && npm test -- --run
 ```
 
 ## Architecture
-Browser → feature hooks/services → FastAPI routes → services → repository interface → mock or Snowflake repository. Grid requests use `startRow`, `endRow`, `sortModel`, `filterModel`; responses use `{ rows, totalRowCount }`.
+Browser → feature hooks/services → FastAPI routes → services → repository interface → mock or Snowflake repository. Both grids use AG Grid's Community Infinite Row Model datasource for server-side pagination, sorting, and filtering. Requests use `startRow`, `endRow`, `sortModel`, and `filterModel`; responses use `{ rows, totalRowCount }`. Use **Add row** to create a forecast record, edit allowed cells inline, then **Save** pending edits. Selected rows can be bulk-updated.
 
 ## Screens
 1. **Forecast landing**: template/version/status/KPI list and navigation.
-2. **Forecast template**: metadata, KPI cards, editable AG Grid, insert five, duplicate, bulk actions, save, export, reset layout.
+2. **Forecast template**: metadata, KPI cards, editable AG Grid, add row, duplicate, bulk actions, save, export, reset layout.
 3. **Budget maintenance**: schema-led editable/non-editable AG Grid view.
 
 Forecast and budget columns can be reordered, but dragging them outside the grid no longer
@@ -105,12 +106,16 @@ complete default column layout.
 
 ## API endpoints
 - `GET /api/templates`
+- `POST /api/templates` creates one forecast template.
+- `POST /api/templates/upload` imports 1–500 template records from a CSV payload.
 - `GET /api/templates/{template_name}/metadata`
 - `POST /api/templates/{template_name}/rows/query`
 - `POST /api/templates/{template_name}/rows/validate`
 - `POST /api/templates/{template_name}/rows/save`
 - `GET /api/templates/{template_name}/dimensions?parentField=&parentValue=`
 - `GET /api/templates/{template_name}/export`
+- CSV upload requires `Template Name` and `Version` headers. Optional headers are
+  `Section`, `Status`, `Current Forecast`, `Prior Forecast`, and `Variance`.
 - `POST /api/templates/{template_name}/actions/{action_name}`
 - `POST /api/budget/query`
 - `PATCH /api/budget/bulk-update`
