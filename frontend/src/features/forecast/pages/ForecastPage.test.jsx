@@ -4,7 +4,10 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ForecastPage from './ForecastPage';
 
-const { grid } = vi.hoisted(() => ({ grid: vi.fn(() => null) }));
+const { grid, queryRows } = vi.hoisted(() => ({
+  grid: vi.fn(() => null),
+  queryRows: vi.fn(),
+}));
 
 vi.mock('ag-grid-react', () => ({ AgGridReact: grid }));
 vi.mock('../hooks/useForecastGrid', () => ({
@@ -18,6 +21,7 @@ vi.mock('../hooks/useForecastGrid', () => ({
 vi.mock('../services/forecastService', () => ({
   forecastService: {
     getMetadata: () => Promise.resolve(null),
+    queryRows,
   },
 }));
 
@@ -76,8 +80,66 @@ describe('forecast column visibility', () => {
 
     expect(api.applyColumnState).not.toHaveBeenCalled();
     expect(props.suppressDragLeaveHidesColumns).toBe(true);
+    expect(props.rowModelType).toBe('infinite');
+    expect(props.pagination).toBe(true);
+    expect(props.paginationPageSize).toBe(100);
+    expect(
+      props.columnDefs.find((column) => column.colId === 'NOV_FORECAST').filter,
+    ).toBe('agNumberColumnFilter');
     expect(props.columnDefs.find((column) => column.colId === 'BRAND')).toEqual(
       expect.objectContaining({ suppressMovable: false }),
+    );
+  });
+
+  it('requests filtered, sorted pages from the server datasource', async () => {
+    const props = await renderPage();
+    queryRows.mockResolvedValue({ rows: [{ UNIQ_ID: 1 }], totalRowCount: 250 });
+    const successCallback = vi.fn();
+    const failCallback = vi.fn();
+    const params = {
+      startRow: 100,
+      endRow: 300,
+      sortModel: [{ colId: 'NOV_FORECAST', sort: 'desc' }],
+      filterModel: {
+        COMPANY_CODE: { filterType: 'text', type: 'contains', filter: 'US' },
+      },
+      successCallback,
+      failCallback,
+    };
+
+    await props.datasource.getRows(params);
+
+    expect(queryRows).toHaveBeenCalledWith('Warner Media', {
+      startRow: 100,
+      endRow: 300,
+      sortModel: params.sortModel,
+      filterModel: params.filterModel,
+    });
+    expect(successCallback).toHaveBeenCalledWith([{ UNIQ_ID: 1 }], 250);
+    expect(failCallback).not.toHaveBeenCalled();
+  });
+
+  it('keeps unsaved cell edits visible when a server block is reloaded', async () => {
+    const props = await renderPage();
+    props.onCellValueChanged({ data: { UNIQ_ID: 7, NOV_FORECAST: 999 } });
+    queryRows.mockResolvedValue({
+      rows: [{ UNIQ_ID: 7, NOV_FORECAST: 100 }],
+      totalRowCount: 1,
+    });
+    const successCallback = vi.fn();
+
+    await props.datasource.getRows({
+      startRow: 0,
+      endRow: 200,
+      sortModel: [],
+      filterModel: {},
+      successCallback,
+      failCallback: vi.fn(),
+    });
+
+    expect(successCallback).toHaveBeenCalledWith(
+      [{ UNIQ_ID: 7, NOV_FORECAST: 999 }],
+      1,
     );
   });
 });

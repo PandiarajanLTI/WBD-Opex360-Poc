@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { AgGridReact } from 'ag-grid-react';
+import AddForecastRowPanel from '../components/AddForecastRowPanel';
 import BulkUpdatePanel from '../components/BulkUpdatePanel';
 import { createForecastColumns, MONTH_COLUMNS } from '../models/columns';
 import { forecastService } from '../services/forecastService';
-import { useForecastGrid } from '../hooks/useForecastGrid';
 import {
   loadColumnState,
   normalizeMovedColumnState,
@@ -12,25 +12,19 @@ import {
 } from '../utils/columnState';
 import { applyPasteToGrid, parseClipboardText } from '../../shared/clipboard';
 const PAGE_SIZE = 100;
+const CACHE_BLOCK_SIZE = 200;
 export default function ForecastPage() {
   const { templateName = '' } = useParams();
   const decodedName = decodeURIComponent(templateName);
   const gridRef = useRef(null);
-  const tempId = useRef(-1);
-  const {
-    rows,
-    totalRowCount,
-    isLoading,
-    error,
-    dirtyRows,
-    loadRows,
-    markDirty,
-    clearDirty,
-    setState,
-  } = useForecastGrid(decodedName);
+  const dirtyRowsRef = useRef(new Map());
+  const [totalRowCount, setTotalRowCount] = useState(0);
+  const [dirtyMap, setDirtyMap] = useState(() => new Map());
+  const [rowDialogSeed, setRowDialogSeed] = useState(null);
+  const [isAddRowOpen, setIsAddRowOpen] = useState(false);
+  const dirtyRows = [...dirtyMap.values()];
   const [metadata, setMetadata] = useState(null);
   const [message, setMessage] = useState('');
-  const [page, setPage] = useState(0);
   const [selectedCount, setSelectedCount] = useState(0);
   const [isBulkUpdateOpen, setIsBulkUpdateOpen] = useState(false);
   const columnDefs = useMemo(() => createForecastColumns(), []);
@@ -39,37 +33,48 @@ export default function ForecastPage() {
       sortable: true,
       filter: true,
       resizable: true,
+      floatingFilter: true,
       suppressHeaderMenuButton: false,
     }),
     [],
+  );
+  const markDirty = useCallback((row) => {
+    dirtyRowsRef.current = new Map(dirtyRowsRef.current).set(row.UNIQ_ID, row);
+    setDirtyMap((current) => new Map(current).set(row.UNIQ_ID, row));
+  }, []);
+  const datasource = useMemo(
+    () => ({
+      getRows: async (params) => {
+        try {
+          const result = await forecastService.queryRows(decodedName, {
+            startRow: params.startRow,
+            endRow: params.endRow,
+            sortModel: params.sortModel,
+            filterModel: params.filterModel,
+          });
+          setTotalRowCount(result.totalRowCount);
+          const visibleRows = result.rows.map(
+            (row) => dirtyRowsRef.current.get(row.UNIQ_ID) ?? row,
+          );
+          params.successCallback(visibleRows, result.totalRowCount);
+        } catch (requestError) {
+          setMessage(requestError.message);
+          params.failCallback();
+        }
+      },
+    }),
+    [decodedName],
   );
   useEffect(() => {
     const controller = new AbortController();
     forecastService
       .getMetadata(decodedName, controller.signal)
       .then(setMetadata)
-      .catch((e) => setMessage(e.message));
+      .catch((error) => {
+        if (!controller.signal.aborted) setMessage(error.message);
+      });
     return () => controller.abort();
   }, [decodedName]);
-  const requestPage = useCallback(
-    (nextPage, api = gridRef.current?.api) => {
-      const startRow = nextPage * PAGE_SIZE;
-      const sortModel =
-        api
-          ?.getColumnState()
-          .filter((c) => c.sort)
-          .map((c) => ({ colId: c.colId, sort: c.sort })) ?? [];
-      const filterModel = api?.getFilterModel() ?? {};
-      setPage(nextPage);
-      loadRows({
-        startRow,
-        endRow: startRow + PAGE_SIZE,
-        sortModel,
-        filterModel,
-      });
-    },
-    [loadRows],
-  );
   const handleCellValueChanged = useCallback(
     ({ data }) => markDirty(data),
     [markDirty],
@@ -101,46 +106,33 @@ export default function ForecastPage() {
     },
     [decodedName],
   );
-  const insertFive = () => {
-    const additions = Array.from({ length: 5 }, () => ({
-      UNIQ_ID: tempId.current--,
-      TEMPLATE_NAME: decodedName,
-      VERSION: metadata?.version ?? '10+2',
-      NOV_FORECAST: 0,
-      DEC_FORECAST: 0,
-      INSERTED: 'Y',
-    }));
-    setState((current) => ({
-      ...current,
-      rows: [...additions, ...current.rows],
-    }));
-    additions.forEach(markDirty);
-  };
   const duplicateSelected = () => {
     const selected = gridRef.current?.api.getSelectedRows()[0];
     if (!selected) return setMessage('Select one row to duplicate.');
-    const copy = { ...selected, UNIQ_ID: tempId.current--, INSERTED: 'Y' };
-    setState((current) => ({ ...current, rows: [copy, ...current.rows] }));
-    markDirty(copy);
+    setRowDialogSeed(selected);
+    setIsAddRowOpen(true);
+  };
+  const handleRowCreated = (notice) => {
+    setIsAddRowOpen(false);
+    setRowDialogSeed(null);
+    setMessage(notice);
+    gridRef.current?.api.refreshInfiniteCache();
   };
   const applyBulkUpdate = useCallback(
     (field, value) => {
       const selectedRows = gridRef.current?.api.getSelectedRows() ?? [];
       if (!selectedRows.length) return;
-      const selectedIds = new Set(selectedRows.map((row) => row.UNIQ_ID));
-      const updatedRows = rows.map((row) =>
-        selectedIds.has(row.UNIQ_ID) ? { ...row, [field]: value } : row,
-      );
-      setState((current) => ({ ...current, rows: updatedRows }));
-      updatedRows
-        .filter((row) => selectedIds.has(row.UNIQ_ID))
-        .forEach(markDirty);
+      const selectedNodes = gridRef.current?.api.getSelectedNodes() ?? [];
+      selectedNodes.forEach((node) => {
+        node.setDataValue(field, value);
+        markDirty({ ...node.data, [field]: value });
+      });
       setIsBulkUpdateOpen(false);
       setMessage(
         `Applied ${field} to ${selectedRows.length} row(s). Save to persist the changes.`,
       );
     },
-    [markDirty, rows, setState],
+    [markDirty],
   );
   const save = async () => {
     if (!dirtyRows.length) return;
@@ -159,8 +151,9 @@ export default function ForecastPage() {
     try {
       const result = await forecastService.saveRows(decodedName, dirtyRows);
       setMessage(result.message);
-      clearDirty();
-      requestPage(page);
+      dirtyRowsRef.current = new Map();
+      setDirtyMap(new Map());
+      gridRef.current?.api.refreshInfiniteCache();
     } catch (e) {
       setMessage(e.message);
     }
@@ -191,6 +184,18 @@ export default function ForecastPage() {
           onClose={() => setIsBulkUpdateOpen(false)}
         />
       )}
+      {isAddRowOpen && (
+        <AddForecastRowPanel
+          templateName={decodedName}
+          version={metadata?.version ?? '10+2'}
+          initialData={rowDialogSeed}
+          onClose={() => {
+            setIsAddRowOpen(false);
+            setRowDialogSeed(null);
+          }}
+          onComplete={handleRowCreated}
+        />
+      )}
       <div className="page-heading">
         <div>
           <h1>{decodedName}</h1>
@@ -200,7 +205,7 @@ export default function ForecastPage() {
           </p>
         </div>
         <div className="actions">
-          <button onClick={insertFive}>Insert 5 rows</button>
+          <button onClick={() => setIsAddRowOpen(true)}>Add row</button>
           <button onClick={duplicateSelected}>Duplicate</button>
           <button
             disabled={!selectedCount}
@@ -232,16 +237,21 @@ export default function ForecastPage() {
         </div>
       )}
       {message && <div className="notice">{message}</div>}
-      {error && <div className="error">{error}</div>}
       <div className="panel grid-panel">
         <div className="ag-theme-quartz grid" onPaste={handlePaste}>
           <AgGridReact
-            rowData={rows}
+            theme="legacy"
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
+            rowModelType="infinite"
+            datasource={datasource}
+            cacheBlockSize={CACHE_BLOCK_SIZE}
+            maxBlocksInCache={5}
+            pagination
+            paginationPageSize={PAGE_SIZE}
+            paginationPageSizeSelector={[50, 100, 200]}
             getRowId={({ data }) => String(data.UNIQ_ID)}
-            rowSelection={{ mode: 'multiRow' }}
-            loading={isLoading}
+            rowSelection={{ mode: 'multiRow', headerCheckbox: false }}
             stopEditingWhenCellsLoseFocus
             suppressDragLeaveHidesColumns
             onGridReady={handleGridReady}
@@ -250,21 +260,7 @@ export default function ForecastPage() {
               setSelectedCount(api.getSelectedRows().length)
             }
             onColumnMoved={handleColumnMoved}
-            onSortChanged={() => requestPage(0)}
-            onFilterChanged={() => requestPage(0)}
           />
-        </div>
-        <div className="pager">
-          <button disabled={page === 0} onClick={() => requestPage(page - 1)}>
-            Previous
-          </button>
-          <span>Page {page + 1}</span>
-          <button
-            disabled={(page + 1) * PAGE_SIZE >= totalRowCount}
-            onClick={() => requestPage(page + 1)}
-          >
-            Next
-          </button>
         </div>
       </div>
     </>

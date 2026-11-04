@@ -92,11 +92,11 @@ cd frontend && npm run format:check && npm run lint && npm test -- --run
 ```
 
 ## Architecture
-Browser → feature hooks/services → FastAPI routes → services → repository interface → mock or Snowflake repository. Grid requests use `startRow`, `endRow`, `sortModel`, `filterModel`; responses use `{ rows, totalRowCount }`.
+Browser → feature hooks/services → FastAPI routes → services → repository interface → mock or Snowflake repository. Both grids use AG Grid's Community Infinite Row Model datasource for server-side pagination, sorting, and filtering. Requests use `startRow`, `endRow`, `sortModel`, and `filterModel`; responses use `{ rows, totalRowCount }`. Use **Add row** to create a forecast record, edit allowed cells inline, then **Save** pending edits. Selected rows can be bulk-updated.
 
 ## Screens
 1. **Forecast landing**: template/version/status/KPI list and navigation.
-2. **Forecast template**: metadata, KPI cards, editable AG Grid, insert five, duplicate, bulk actions, save, export, reset layout.
+2. **Forecast template**: metadata, KPI cards, editable AG Grid, add row, duplicate, bulk actions, save, export, reset layout.
 3. **Budget maintenance**: schema-led editable/non-editable AG Grid view.
 
 Forecast and budget columns can be reordered, but dragging them outside the grid no longer

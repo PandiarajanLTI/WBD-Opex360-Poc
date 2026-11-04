@@ -1,7 +1,12 @@
 from typing import Any
 from app.core.config import Settings
 from app.db.snowflake import SnowflakeConnectionFactory
-from app.repositories.query_builder import ALLOWED_COLUMNS, build_grid_query
+from app.repositories.query_builder import (
+    ALLOWED_COLUMNS,
+    build_filter_clauses,
+    build_grid_query,
+    build_order_clause,
+)
 from app.schemas.grid import GridQuery
 class SnowflakeForecastRepository:
     def __init__(self, settings: Settings, factory: SnowflakeConnectionFactory): self.settings, self.factory = settings, factory
@@ -31,12 +36,40 @@ class SnowflakeForecastRepository:
     def metadata(self, template_name):
         item = next(x for x in self.list_templates() if x["templateName"] == template_name); return {"templateName":template_name,"version":item["version"],"status":item["status"],"kpis":{"Current forecast":item["currentForecast"],"Prior forecast":item["priorForecast"],"Variance":item["variance"]}}
     def query(self, template_name, request):
-        built = build_grid_query(self.settings.snowflake_forecast_table, template_name, request); rows = self._fetch(built.sql, built.params); total = self._fetch(f"SELECT COUNT(*) AS TOTAL FROM {self.settings.snowflake_forecast_table} WHERE TEMPLATE_NAME = %(template_name)s", {"template_name":template_name})[0]["TOTAL"]; return rows, total
+        built = build_grid_query(self.settings.snowflake_forecast_table, template_name, request)
+        rows = self._fetch(built.sql, built.params)
+        count_params: dict[str, Any] = {"template_name": template_name}
+        filters = build_filter_clauses(
+            request.filterModel, ALLOWED_COLUMNS, count_params
+        )
+        where = ["TEMPLATE_NAME = %(template_name)s", *filters]
+        total = self._fetch(
+            f"SELECT COUNT(*) AS TOTAL FROM {self.settings.snowflake_forecast_table} "
+            f"WHERE {' AND '.join(where)}",
+            count_params,
+        )[0]["TOTAL"]
+        return rows, total
     def save(self, template_name, rows):
         editable = {"NOV_FORECAST","DEC_FORECAST","NOTES"}
         with self.factory.connection() as connection:
             cursor = connection.cursor()
             for row in rows:
+                if row.get("INSERTED") == "Y" or int(row.get("UNIQ_ID", 0)) < 0:
+                    fields = [
+                        field for field in sorted(ALLOWED_COLUMNS - {"UNIQ_ID"})
+                        if field in row
+                    ]
+                    columns = ", ".join(fields)
+                    values = ", ".join(f"%({field})s" for field in fields)
+                    cursor.execute(
+                        f"INSERT INTO {self.settings.snowflake_forecast_table} "
+                        f"({columns}) VALUES ({values})",
+                        {
+                            **{field: row[field] for field in fields},
+                            "TEMPLATE_NAME": row.get("TEMPLATE_NAME", template_name),
+                        },
+                    )
+                    continue
                 fields = [field for field in editable if field in row]
                 if not fields: continue
                 assignments = ", ".join(f"{field} = %({field})s" for field in fields); params = {field:row[field] for field in fields}; params["uniq_id"] = row["UNIQ_ID"]; cursor.execute(f"UPDATE {self.settings.snowflake_forecast_table} SET {assignments} WHERE UNIQ_ID = %(uniq_id)s", params)
@@ -45,7 +78,30 @@ class SnowflakeForecastRepository:
     def valid_combination(self, company_code, cost_center, profit_center):
         table=self.settings.snowflake_mapping_table; rows=self._fetch(f"SELECT COUNT(*) AS TOTAL FROM {table} WHERE COMPANY_CODE=%(company)s AND COST_CENTER=%(cost)s AND PROFIT_CENTER=%(profit)s AND COALESCE(CLOSED,'NO') != 'YES'", {"company":company_code,"cost":cost_center,"profit":profit_center}); return rows[0]["TOTAL"] > 0
     def budget_query(self, request):
-        columns="COSTCENTER, COSTCENTER_NAME, COMPANY_CODE, PROFIT_CENTER, FUNCTION, SUBFUNCTION, BUDGET_HOLDER, REGION, LOCATION, CITY"; rows=self._fetch(f"SELECT {columns} FROM {self.settings.snowflake_budget_table} LIMIT %(limit)s OFFSET %(offset)s", {"limit":request.endRow-request.startRow,"offset":request.startRow}); total=self._fetch(f"SELECT COUNT(*) AS TOTAL FROM {self.settings.snowflake_budget_table}", {})[0]["TOTAL"]; return rows,total
+        columns = "COSTCENTER, COSTCENTER_NAME, COMPANY_CODE, PROFIT_CENTER, FUNCTION, SUBFUNCTION, BUDGET_HOLDER, REGION, LOCATION, CITY"
+        allowed_columns = {column.strip() for column in columns.split(",")}
+        params = {
+            "limit": request.endRow - request.startRow,
+            "offset": request.startRow,
+        }
+        filters = build_filter_clauses(
+            request.filterModel, allowed_columns, params
+        )
+        where_sql = f" WHERE {' AND '.join(filters)}" if filters else ""
+        order_sql = build_order_clause(
+            request.sortModel, allowed_columns, "COSTCENTER ASC"
+        )
+        table = self.settings.snowflake_budget_table
+        rows = self._fetch(
+            f"SELECT {columns} FROM {table}{where_sql} ORDER BY {order_sql} "
+            "LIMIT %(limit)s OFFSET %(offset)s",
+            params,
+        )
+        count_params = {key: value for key, value in params.items() if key.startswith("filter_")}
+        total = self._fetch(
+            f"SELECT COUNT(*) AS TOTAL FROM {table}{where_sql}", count_params
+        )[0]["TOTAL"]
+        return rows, total
     def budget_save(self, rows):
         editable = {"FUNCTION","SUBFUNCTION","COE_TEAM","COE_SUB_TEAM","COE_POC","BU_POC","BUDGET_HOLDER","REGION","LOCATION","CITY","CUSTOM_1","CUSTOM_2","CUSTOM_3"}
         with self.factory.connection() as connection:

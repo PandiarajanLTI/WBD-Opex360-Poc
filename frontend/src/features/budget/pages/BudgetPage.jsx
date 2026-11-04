@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import { apiJson } from '../../../services/api/apiClient';
 import BulkUpdatePanel from '../../forecast/components/BulkUpdatePanel';
@@ -47,12 +47,37 @@ function loadState() {
 }
 
 export default function BudgetPage() {
-  const [rows, setRows] = useState([]);
   const [dirty, setDirty] = useState({});
   const [selectedCount, setSelectedCount] = useState(0);
   const [isBulkOpen, setIsBulkOpen] = useState(false);
   const [message, setMessage] = useState('');
   const apiRef = useRef(null);
+  const dirtyRef = useRef({});
+  const datasource = useMemo(
+    () => ({
+      getRows: async (params) => {
+        try {
+          const result = await apiJson('/budget/query', {
+            method: 'POST',
+            body: JSON.stringify({
+              startRow: params.startRow,
+              endRow: params.endRow,
+              sortModel: params.sortModel,
+              filterModel: params.filterModel,
+            }),
+          });
+          const visibleRows = result.rows.map(
+            (row) => dirtyRef.current[row.COSTCENTER] ?? row,
+          );
+          params.successCallback(visibleRows, result.totalRowCount);
+        } catch (error) {
+          setMessage(error.message);
+          params.failCallback();
+        }
+      },
+    }),
+    [],
+  );
   const columns = useMemo(
     () =>
       FIELDS.map((field) => ({
@@ -61,28 +86,23 @@ export default function BudgetPage() {
         editable: EDITABLE.has(field),
         pinned: EDITABLE.has(field) ? null : 'left',
         minWidth: 150,
+        filter: 'agTextColumnFilter',
       })),
     [],
   );
-
-  const load = useCallback(
-    () =>
-      apiJson('/budget/query', {
-        method: 'POST',
-        body: JSON.stringify({
-          startRow: 0,
-          endRow: 100,
-          sortModel: [],
-          filterModel: {},
-        }),
-      }).then((result) => setRows(result.rows)),
+  const defaultColDef = useMemo(
+    () => ({
+      sortable: true,
+      filter: true,
+      floatingFilter: true,
+      resizable: true,
+      minWidth: 150,
+    }),
     [],
   );
-  useEffect(() => {
-    load();
-  }, [load]);
 
   const handleCellValueChanged = useCallback(({ data }) => {
+    dirtyRef.current = { ...dirtyRef.current, [data.COSTCENTER]: data };
     setDirty((current) => ({ ...current, [data.COSTCENTER]: data }));
   }, []);
 
@@ -137,9 +157,10 @@ export default function BudgetPage() {
         method: 'PATCH',
         body: JSON.stringify({ rows: changed }),
       });
+      dirtyRef.current = {};
       setDirty({});
       setMessage(result.message);
-      await load();
+      apiRef.current?.refreshInfiniteCache();
     } catch (e) {
       setMessage(e.message);
     }
@@ -159,7 +180,10 @@ export default function BudgetPage() {
       <div className="page-heading">
         <div>
           <h1>Budget holder mapping</h1>
-          <p>Schema-led editable cost-center attributes.</p>
+          <p>
+            Schema-led editable cost-center attributes. Filter by column or edit
+            cells inline.
+          </p>
         </div>
         <div className="actions">
           <button disabled={!selectedCount} onClick={() => setIsBulkOpen(true)}>
@@ -182,10 +206,17 @@ export default function BudgetPage() {
       <div className="panel grid-panel">
         <div className="ag-theme-quartz grid" onPaste={handlePaste}>
           <AgGridReact
-            rowData={rows}
+            theme="legacy"
             columnDefs={columns}
-            defaultColDef={{ sortable: true, filter: true, resizable: true }}
-            rowSelection={{ mode: 'multiRow' }}
+            defaultColDef={defaultColDef}
+            datasource={datasource}
+            rowModelType="infinite"
+            cacheBlockSize={200}
+            maxBlocksInCache={5}
+            pagination
+            paginationPageSize={100}
+            paginationPageSizeSelector={[50, 100, 200]}
+            rowSelection={{ mode: 'multiRow', headerCheckbox: false }}
             stopEditingWhenCellsLoseFocus
             suppressDragLeaveHidesColumns
             getRowId={({ data }) => data.COSTCENTER}

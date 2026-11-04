@@ -1,6 +1,7 @@
 from copy import deepcopy
 from typing import Any
 from app.schemas.grid import GridQuery
+from app.repositories.query_builder import ALLOWED_COLUMNS, matches_filter_model, sort_rows
 BUDGET_EDITABLE_COLUMNS = {"FUNCTION","SUBFUNCTION","COE_TEAM","COE_SUB_TEAM","COE_POC","BU_POC","BUDGET_HOLDER","REGION","LOCATION","CITY","CUSTOM_1","CUSTOM_2","CUSTOM_3"}
 class MockForecastRepository:
     def __init__(self):
@@ -27,21 +28,24 @@ class MockForecastRepository:
         item = next((x for x in self.list_templates() if x["templateName"] == template_name), self.list_templates()[0]); return {"templateName": template_name, "version": item["version"], "status": item["status"], "kpis": {"Current forecast": item["currentForecast"], "Prior forecast": item["priorForecast"], "Variance": item["variance"]}}
     def query(self, template_name, request: GridQuery):
         rows = [r for r in self.rows if r["TEMPLATE_NAME"] == template_name]
-        for column, model in request.filterModel.items():
-            value = str(model.get("filter", "")).lower(); rows = [r for r in rows if value in str(r.get(column, "")).lower()]
-        for sort in reversed(request.sortModel): rows.sort(key=lambda r: (r.get(sort.colId) is None, r.get(sort.colId)), reverse=sort.sort == "desc")
+        rows = [row for row in rows if matches_filter_model(row, request.filterModel, ALLOWED_COLUMNS)]
+        sort_rows(rows, request.sortModel, ALLOWED_COLUMNS)
         return deepcopy(rows[request.startRow:request.endRow]), len(rows)
     def save(self, template_name, rows):
         for incoming in rows:
+            stored = {key: value for key, value in incoming.items() if key != "INSERTED"}
             found = next((r for r in self.rows if r["UNIQ_ID"] == incoming.get("UNIQ_ID")), None)
-            if found: found.update(incoming)
-            else: incoming = dict(incoming); incoming["UNIQ_ID"] = max(r["UNIQ_ID"] for r in self.rows) + 1; incoming["TEMPLATE_NAME"] = template_name; self.rows.append(incoming)
+            if found: found.update(stored)
+            else: stored["UNIQ_ID"] = max(r["UNIQ_ID"] for r in self.rows) + 1; stored["TEMPLATE_NAME"] = template_name; self.rows.append(stored)
         return len(rows)
     def valid_combination(self, company_code, cost_center, profit_center): return bool(company_code and cost_center and profit_center)
     def budget_query(self, request):
         rows = [{"COSTCENTER":f"C{i:03}","COSTCENTER_NAME":f"Cost Center {i}","COMPANY_CODE":"US01","PROFIT_CENTER":f"P{i%8:03}","FUNCTION":"Technology","SUBFUNCTION":"Engineering","BUDGET_HOLDER":"POC User","REGION":"Americas","LOCATION":"New York","CITY":"New York"} for i in range(1, 101)]
         # User-modified values win over the freshly loaded source data.
         rows = [{**row, **self.budget_overrides.get(row["COSTCENTER"], {})} for row in rows]
+        allowed = set(rows[0]) if rows else set()
+        rows = [row for row in rows if matches_filter_model(row, request.filterModel, allowed)]
+        sort_rows(rows, request.sortModel, allowed)
         return rows[request.startRow:request.endRow], len(rows)
     def budget_save(self, rows):
         for incoming in rows:
