@@ -2,7 +2,7 @@
   --primary: #4a6fe3;
   --primary-dark: #3459cb;
   --nav: #4d70e8;
-  --bg: #f2f4ff;
+  --bg: #f3f5ff;
   --surface: #fff;
   --text: #20232d;
   --muted: #858998;
@@ -12,8 +12,8 @@
   --radius: 13px;
   --shadow: 0 2px 8px rgba(38, 48, 94, 0.045);
   --space: 16px;
-  --header: 54px;
-  --nav-height: 42px;
+  --header: 62px;
+  --nav-height: 36px;
   font-family:
     Segoe UI,
     Arial,

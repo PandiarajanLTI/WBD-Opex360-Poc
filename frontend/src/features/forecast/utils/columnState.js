@@ -1,11 +1,7 @@
 export function getDefaultColumnState(columnDefinitions) {
   return columnDefinitions.map((column, index) => ({
     colId: column.colId,
-    pinned:
-      column.context?.columnType === 'month' ||
-      column.context?.columnType === 'summary'
-        ? null
-        : 'left',
+    pinned: column.colId === 'TEMPLATE_NAME' ? 'left' : null,
     hide: false,
     sort: null,
     sortIndex: null,
@@ -27,10 +23,16 @@ export function normalizeMovedColumnState(
     column.colId === movedColumnId
       ? {
           ...column,
-          pinned: movedIndex >= monthStart ? null : (column.pinned ?? 'left'),
+          pinned: movedIndex >= monthStart ? null : (column.pinned ?? null),
         }
       : column,
   );
+}
+export function limitPinnedDescriptorColumns(state) {
+  return state.map((column) => ({
+    ...column,
+    pinned: column.colId === 'TEMPLATE_NAME' ? 'left' : null,
+  }));
 }
 export function saveColumnState(templateName, state) {
   localStorage.setItem(

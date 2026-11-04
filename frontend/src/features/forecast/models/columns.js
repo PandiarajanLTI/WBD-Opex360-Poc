@@ -28,7 +28,7 @@ export function createForecastColumns() {
     field,
     headerName,
     colId: field,
-    pinned: 'left',
+    pinned: field === 'TEMPLATE_NAME' ? 'left' : null,
     lockPinned: false,
     suppressMovable: false,
     editable: ({ data }) => data?.INSERTED === 'Y' || field === 'NOTES',

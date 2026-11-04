@@ -49,6 +49,43 @@ class SnowflakeForecastRepository:
             count_params,
         )[0]["TOTAL"]
         return rows, total
+    def summarize(self, template_name, request):
+        group_columns = {"FSI_ACCOUNT", "GEOGRAPHY"}
+        summary_columns = {
+            "FSI_ACCOUNT", "GEOGRAPHY", "FY_WORKING_FORECAST", "ROW_COUNT"
+        }
+        params: dict[str, Any] = {
+            "template_name": template_name,
+            "limit": request.endRow - request.startRow,
+            "offset": request.startRow,
+        }
+        filters = build_filter_clauses(
+            request.filterModel, group_columns, params
+        )
+        where = ["TEMPLATE_NAME = %(template_name)s", *filters]
+        order_sql = build_order_clause(
+            request.sortModel, summary_columns, "FSI_ACCOUNT ASC, GEOGRAPHY ASC"
+        )
+        table = self.settings.snowflake_forecast_table
+        grouped_query = (
+            f"SELECT FSI_ACCOUNT, GEOGRAPHY, "
+            f"SUM(COALESCE(FY_WORKING_FORECAST, 0)) AS FY_WORKING_FORECAST, "
+            f"COUNT(*) AS ROW_COUNT FROM {table} "
+            f"WHERE {' AND '.join(where)} "
+            "GROUP BY FSI_ACCOUNT, GEOGRAPHY"
+        )
+        rows = self._fetch(
+            f"{grouped_query} ORDER BY {order_sql} LIMIT %(limit)s OFFSET %(offset)s",
+            params,
+        )
+        count_params = {
+            key: value for key, value in params.items() if key.startswith("filter_")
+        }
+        total = self._fetch(
+            f"SELECT COUNT(*) AS TOTAL FROM ({grouped_query}) AS grouped_rows",
+            {**count_params, "template_name": template_name},
+        )[0]["TOTAL"]
+        return rows, total
     def save(self, template_name, rows):
         editable = {"NOV_FORECAST","DEC_FORECAST","NOTES"}
         with self.factory.connection() as connection:

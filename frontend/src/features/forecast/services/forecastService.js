@@ -8,6 +8,12 @@ export const forecastService = {
       body: JSON.stringify(request),
       signal,
     }),
+  querySummaryRows: (name, request, signal) =>
+    apiJson(`/templates/${encodeURIComponent(name)}/rows/summary`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+      signal,
+    }),
   validateRows: (name, rows) =>
     apiJson(`/templates/${encodeURIComponent(name)}/rows/validate`, {
       method: 'POST',
