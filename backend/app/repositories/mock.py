@@ -31,6 +31,32 @@ class MockForecastRepository:
         rows = [row for row in rows if matches_filter_model(row, request.filterModel, ALLOWED_COLUMNS)]
         sort_rows(rows, request.sortModel, ALLOWED_COLUMNS)
         return deepcopy(rows[request.startRow:request.endRow]), len(rows)
+    def summarize(self, template_name, request: GridQuery):
+        source_rows = [r for r in self.rows if r["TEMPLATE_NAME"] == template_name]
+        source_rows = [
+            row for row in source_rows
+            if matches_filter_model(row, request.filterModel, ALLOWED_COLUMNS)
+        ]
+        grouped = {}
+        for row in source_rows:
+            key = (row.get("FSI_ACCOUNT"), row.get("GEOGRAPHY"))
+            summary = grouped.setdefault(
+                key,
+                {
+                    "FSI_ACCOUNT": key[0],
+                    "GEOGRAPHY": key[1],
+                    "FY_WORKING_FORECAST": 0,
+                    "ROW_COUNT": 0,
+                },
+            )
+            summary["FY_WORKING_FORECAST"] += float(row.get("FY_WORKING_FORECAST") or 0)
+            summary["ROW_COUNT"] += 1
+        rows = list(grouped.values())
+        summary_columns = {
+            "FSI_ACCOUNT", "GEOGRAPHY", "FY_WORKING_FORECAST", "ROW_COUNT"
+        }
+        sort_rows(rows, request.sortModel, summary_columns)
+        return deepcopy(rows[request.startRow:request.endRow]), len(rows)
     def save(self, template_name, rows):
         for incoming in rows:
             stored = {key: value for key, value in incoming.items() if key != "INSERTED"}
