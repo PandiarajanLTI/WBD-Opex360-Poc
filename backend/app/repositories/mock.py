@@ -1,14 +1,8 @@
 from copy import deepcopy
 from typing import Any
 from app.schemas.grid import GridQuery
-from app.repositories.query_builder import (
-    ALLOWED_COLUMNS,
-    BUDGET_COLUMNS,
-    BUDGET_UPDATE_COLUMNS,
-    FORECAST_UPDATE_COLUMNS,
-    matches_filter_model,
-    sort_rows,
-)
+from app.repositories.query_builder import ALLOWED_COLUMNS, matches_filter_model, sort_rows
+BUDGET_EDITABLE_COLUMNS = {"FUNCTION","SUBFUNCTION","COE_TEAM","COE_SUB_TEAM","COE_POC","BU_POC","BUDGET_HOLDER","REGION","LOCATION","CITY","CUSTOM_1","CUSTOM_2","CUSTOM_3"}
 class MockForecastRepository:
     def __init__(self):
         self.budget_overrides: dict[str, dict[str, Any]] = {}
@@ -35,10 +29,7 @@ class MockForecastRepository:
     def query(self, template_name, request: GridQuery):
         rows = [r for r in self.rows if r["TEMPLATE_NAME"] == template_name]
         rows = [row for row in rows if matches_filter_model(row, request.filterModel, ALLOWED_COLUMNS)]
-        if request.sortModel:
-            sort_rows(rows, request.sortModel, ALLOWED_COLUMNS)
-        else:
-            rows.sort(key=lambda row: row["UNIQ_ID"], reverse=True)
+        sort_rows(rows, request.sortModel, ALLOWED_COLUMNS)
         return deepcopy(rows[request.startRow:request.endRow]), len(rows)
     def summarize(self, template_name, request: GridQuery):
         source_rows = [r for r in self.rows if r["TEMPLATE_NAME"] == template_name]
@@ -68,39 +59,14 @@ class MockForecastRepository:
         return deepcopy(rows[request.startRow:request.endRow]), len(rows)
     def save(self, template_name, rows):
         for incoming in rows:
+            stored = {key: value for key, value in incoming.items() if key != "INSERTED"}
             found = next((r for r in self.rows if r["UNIQ_ID"] == incoming.get("UNIQ_ID")), None)
-            if found:
-                found.update(
-                    {
-                        key: value
-                        for key, value in incoming.items()
-                        if key in FORECAST_UPDATE_COLUMNS
-                    }
-                )
-            else:
-                stored = {key: value for key, value in incoming.items() if key != "INSERTED"}
-                stored["UNIQ_ID"] = max(r["UNIQ_ID"] for r in self.rows) + 1
-                stored["TEMPLATE_NAME"] = template_name
-                self.rows.append(stored)
+            if found: found.update(stored)
+            else: stored["UNIQ_ID"] = max(r["UNIQ_ID"] for r in self.rows) + 1; stored["TEMPLATE_NAME"] = template_name; self.rows.append(stored)
         return len(rows)
     def valid_combination(self, company_code, cost_center, profit_center): return bool(company_code and cost_center and profit_center)
     def budget_query(self, request):
-        rows = [
-            {
-                **dict.fromkeys(BUDGET_COLUMNS, ""),
-                "COSTCENTER": f"C{i:03}",
-                "COSTCENTER_NAME": f"Cost Center {i}",
-                "COMPANY_CODE": "US01",
-                "PROFIT_CENTER": f"P{i % 8:03}",
-                "FUNCTION": "Technology",
-                "SUBFUNCTION": "Engineering",
-                "BUDGET_HOLDER": "POC User",
-                "REGION": "Americas",
-                "LOCATION": "New York",
-                "CITY": "New York",
-            }
-            for i in range(1, 101)
-        ]
+        rows = [{"COSTCENTER":f"C{i:03}","COSTCENTER_NAME":f"Cost Center {i}","COMPANY_CODE":"US01","PROFIT_CENTER":f"P{i%8:03}","FUNCTION":"Technology","SUBFUNCTION":"Engineering","BUDGET_HOLDER":"POC User","REGION":"Americas","LOCATION":"New York","CITY":"New York"} for i in range(1, 101)]
         # User-modified values win over the freshly loaded source data.
         rows = [{**row, **self.budget_overrides.get(row["COSTCENTER"], {})} for row in rows]
         allowed = set(rows[0]) if rows else set()
@@ -111,6 +77,6 @@ class MockForecastRepository:
         for incoming in rows:
             key = incoming.get("COSTCENTER")
             if not key: continue
-            changes = {k: v for k, v in incoming.items() if k in BUDGET_UPDATE_COLUMNS}
+            changes = {k: v for k, v in incoming.items() if k in BUDGET_EDITABLE_COLUMNS}
             self.budget_overrides.setdefault(key, {}).update(changes)
         return len(rows)
