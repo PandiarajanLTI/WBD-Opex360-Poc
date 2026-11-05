@@ -39,18 +39,11 @@ export default function SelectAllRowsHeader({ api }) {
   };
 
   return (
-    <div
-      style={{
-        alignItems: 'center',
-        display: 'flex',
-        height: '100%',
-        justifyContent: 'center',
-        width: '100%',
-      }}
-    >
+    <div className="select-all-rows-header">
       <input
         aria-label="Select all rows on this page"
         checked={nodes.length > 0 && selectedCount === nodes.length}
+        className="select-all-rows-checkbox"
         disabled={!nodes.length}
         onChange={(event) => {
           nodes.forEach((node) =>

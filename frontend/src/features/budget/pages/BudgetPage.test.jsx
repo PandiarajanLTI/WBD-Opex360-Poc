@@ -84,6 +84,39 @@ it('passes server pagination, sort, and filter options to the budget API', async
   expect(params.successCallback).toHaveBeenCalledWith([], 0);
 });
 
+it('refreshes the budget rows after a successful save', async () => {
+  await act(async () => {
+    render(<BudgetPage />);
+  });
+  const props = grid.mock.lastCall[0];
+  const purgeInfiniteCache = vi.fn();
+  props.onGridReady({ api: { purgeInfiniteCache } });
+  act(() => {
+    props.onCellValueChanged({
+      data: { COSTCENTER: 'C001', REGION: 'Europe' },
+    });
+  });
+  apiJson.mockResolvedValueOnce({
+    message: 'Saved 1 budget holder mapping row(s).',
+  });
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Save 1' }));
+  });
+
+  expect(apiJson).toHaveBeenCalledWith(
+    '/budget/bulk-update',
+    expect.objectContaining({
+      method: 'PATCH',
+      body: JSON.stringify({
+        rows: [{ COSTCENTER: 'C001', REGION: 'Europe' }],
+      }),
+    }),
+  );
+  expect(purgeInfiniteCache).toHaveBeenCalledOnce();
+  expect(screen.getByRole('button', { name: 'Save' }).disabled).toBe(true);
+});
+
 it('uses header filter menus like Build Forecasts without a floating filter row', async () => {
   await act(async () => {
     render(<BudgetPage />);

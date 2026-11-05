@@ -75,6 +75,7 @@ export default function BudgetPage() {
   const [dirty, setDirty] = useState({});
   const [selectedCount, setSelectedCount] = useState(0);
   const [isBulkOpen, setIsBulkOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState('');
   const apiRef = useRef(null);
   const dirtyRef = useRef({});
@@ -178,7 +179,8 @@ export default function BudgetPage() {
 
   const save = async () => {
     const changed = Object.values(dirty);
-    if (!changed.length) return;
+    if (!changed.length || isSaving) return;
+    setIsSaving(true);
     try {
       const result = await apiJson('/budget/bulk-update', {
         method: 'PATCH',
@@ -186,10 +188,13 @@ export default function BudgetPage() {
       });
       dirtyRef.current = {};
       setDirty({});
+      setIsBulkOpen(false);
       setMessage(result.message);
-      apiRef.current?.refreshInfiniteCache();
+      apiRef.current?.purgeInfiniteCache?.();
     } catch (e) {
       setMessage(e.message);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -224,8 +229,12 @@ export default function BudgetPage() {
           >
             Reset layout
           </button>
-          <button className="primary" disabled={!dirtyCount} onClick={save}>
-            Save {dirtyCount || ''}
+          <button
+            className="primary"
+            disabled={!dirtyCount || isSaving}
+            onClick={save}
+          >
+            {isSaving ? 'Saving…' : `Save ${dirtyCount || ''}`}
           </button>
         </div>
       </div>

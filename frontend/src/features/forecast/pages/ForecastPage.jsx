@@ -67,6 +67,7 @@ export default function ForecastPage() {
   const dirtyRows = [...dirtyMap.values()];
   const [metadata, setMetadata] = useState(null);
   const [message, setMessage] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
   const [selectedCount, setSelectedCount] = useState(0);
   const [isBulkUpdateOpen, setIsBulkUpdateOpen] = useState(false);
   const columnDefs = useMemo(() => createForecastColumns(), []);
@@ -299,7 +300,7 @@ export default function ForecastPage() {
     setIsAddRowOpen(false);
     setRowDialogSeed(null);
     setMessage(notice);
-    gridRef.current?.api.refreshInfiniteCache();
+    gridRef.current?.api.purgeInfiniteCache?.();
   };
   const applyBulkUpdate = useCallback(
     (field, value) => {
@@ -318,7 +319,7 @@ export default function ForecastPage() {
     [markDirty],
   );
   const save = async () => {
-    if (!dirtyRows.length) return;
+    if (!dirtyRows.length || isSaving) return;
     if (
       dirtyRows.some(
         (row) =>
@@ -331,14 +332,17 @@ export default function ForecastPage() {
       )
     )
       return;
+    setIsSaving(true);
     try {
       const result = await forecastService.saveRows(decodedName, dirtyRows);
       setMessage(result.message);
       dirtyRowsRef.current = new Map();
       setDirtyMap(new Map());
-      gridRef.current?.api.refreshInfiniteCache();
+      gridRef.current?.api.purgeInfiniteCache?.();
     } catch (e) {
       setMessage(e.message);
+    } finally {
+      setIsSaving(false);
     }
   };
   const handlePaste = (event) => {
@@ -547,11 +551,13 @@ export default function ForecastPage() {
           </button>
           <button
             className="primary"
-            disabled={!dirtyRows.length}
+            disabled={!dirtyRows.length || isSaving}
             onClick={save}
             type="button"
           >
-            Save{dirtyRows.length ? ` (${dirtyRows.length})` : ''}
+            {isSaving
+              ? 'Saving…'
+              : `Save${dirtyRows.length ? ` (${dirtyRows.length})` : ''}`}
           </button>
           <button
             className="submit-forecast-button"

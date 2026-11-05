@@ -190,6 +190,82 @@ main {
 .grid .ag-header-cell-label {
   font-weight: 600;
 }
+.grid .ag-cell-label-container {
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 6px;
+}
+.grid .ag-header-cell-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  width: auto;
+}
+.grid .ag-header-cell-filter-button {
+  order: 1;
+  flex: 0 0 16px;
+  width: 16px;
+  margin: 0;
+}
+.grid .ag-header-cell-filter-button .ag-icon-filter {
+  display: block;
+  width: 14px;
+  height: 14px;
+  background-color: #596575;
+  font-size: 0;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M2.5 3.5h11l-4.25 4.75v3.25l-2.5 1V8.25L2.5 3.5Z' stroke='%23000' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.25'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.grid .ag-header-cell-filter-button .ag-icon-filter::before {
+  content: none;
+}
+.grid .ag-header-cell-filtered .ag-header-cell-filter-button .ag-icon-filter {
+  background-color: var(--primary);
+}
+.select-all-rows-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+.select-all-rows-checkbox {
+  appearance: none;
+  display: grid;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  place-content: center;
+  border: 1px solid #aeb6c4;
+  border-radius: 3px;
+  background: #fff;
+  cursor: pointer;
+}
+.select-all-rows-checkbox:checked,
+.select-all-rows-checkbox:indeterminate {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+.select-all-rows-checkbox:checked::after {
+  width: 8px;
+  height: 4px;
+  border: solid #fff;
+  border-width: 0 0 2px 2px;
+  content: '';
+  transform: translateY(-1px) rotate(-45deg);
+}
+.select-all-rows-checkbox:indeterminate::after {
+  width: 8px;
+  height: 2px;
+  background: #fff;
+  content: '';
+}
+.select-all-rows-checkbox:focus-visible {
+  outline: 2px solid rgba(74, 111, 227, 0.55);
+  outline-offset: 2px;
+}
+.select-all-rows-checkbox:disabled {
+  background: #f3f4f6;
+  cursor: not-allowed;
+}
 .grid .ag-floating-filter-input input {
   border-radius: 5px;
 }

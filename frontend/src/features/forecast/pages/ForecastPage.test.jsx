@@ -12,10 +12,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import ForecastPage from './ForecastPage';
 import { createForecastColumns } from '../models/columns';
 
-const { grid, queryRows, querySummaryRows } = vi.hoisted(() => ({
+const { grid, queryRows, querySummaryRows, saveRows } = vi.hoisted(() => ({
   grid: vi.fn(() => null),
   queryRows: vi.fn(),
   querySummaryRows: vi.fn(),
+  saveRows: vi.fn(),
 }));
 
 vi.mock('ag-grid-react', () => ({ AgGridReact: grid }));
@@ -32,6 +33,7 @@ vi.mock('../services/forecastService', () => ({
     getMetadata: () => Promise.resolve(null),
     queryRows,
     querySummaryRows,
+    saveRows,
   },
 }));
 
@@ -264,5 +266,61 @@ describe('forecast column visibility', () => {
       [{ UNIQ_ID: 7, NOV_FORECAST: 999 }],
       1,
     );
+  });
+
+  it('refreshes forecast rows after a successful save', async () => {
+    const props = await renderPage();
+    const purgeInfiniteCache = vi.fn();
+    props.onGridReady({ api: { purgeInfiniteCache } });
+    act(() => {
+      props.onCellValueChanged({
+        data: { UNIQ_ID: 7, NOV_FORECAST: 999 },
+      });
+    });
+    saveRows.mockResolvedValueOnce({ message: 'Saved 1 row(s).' });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save (1)' }));
+    });
+
+    expect(saveRows).toHaveBeenCalledWith('Warner Media', [
+      { UNIQ_ID: 7, NOV_FORECAST: 999 },
+    ]);
+    expect(purgeInfiniteCache).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: 'Save' }).disabled).toBe(true);
+  });
+
+  it('closes the add-row dialog and reloads the grid after a successful save', async () => {
+    const props = await renderPage();
+    const purgeInfiniteCache = vi.fn();
+    props.onGridReady({ api: { purgeInfiniteCache } });
+    saveRows.mockResolvedValueOnce({ message: 'Saved 1 row(s).' });
+    fireEvent.click(screen.getByRole('button', { name: 'Insert Row' }));
+    const dialog = screen
+      .getByRole('heading', { name: 'Add forecast row' })
+      .closest('dialog');
+
+    [
+      ['Company code', 'US01'],
+      ['Profit center', 'P001'],
+      ['Cost center', 'C900'],
+      ['FSI account', 'A001'],
+      ['Geography', 'NA'],
+      ['Brand', 'Studio'],
+    ].forEach(([label, value]) => {
+      fireEvent.change(within(dialog).getByLabelText(new RegExp(label, 'i')), {
+        target: { value },
+      });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save row' }));
+    });
+
+    expect(saveRows).toHaveBeenCalledOnce();
+    expect(purgeInfiniteCache).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByRole('heading', { name: 'Add forecast row' }),
+    ).toBeNull();
   });
 });
