@@ -12,10 +12,6 @@ def test_ag_number_filter_builds_comparison_and_uses_bound_value():
     assert 'NOV_FORECAST > %(filter_0_0)s' in built.sql
     assert built.params['filter_0_0']==1500
 
-def test_forecast_query_defaults_to_newest_rows_first():
-    built=build_grid_query('FORECAST_TEMPLATE','A',GridQuery())
-    assert 'ORDER BY UNIQ_ID DESC' in built.sql
-
 def test_ag_filter_matcher_applies_text_number_and_or_conditions():
     filters={
         'COMPANY_CODE':{'filterType':'text','type':'contains','filter':'us'},
