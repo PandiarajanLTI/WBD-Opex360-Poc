@@ -7,6 +7,8 @@
 - Required Dimensions opens a locked, always-included view of the forecast row's geography, brand, profit center, FSI account, cost center, and company code.
 - Dimension validation for Company Code, Cost Center, and Profit Center.
 - Budget maintenance grid with workbook-defined bulk-editable fields.
+- Excel/TSV paste supports full-width row updates in Forecast and Budget grids while preserving row keys and calculated forecast totals.
+- Forecast rows use newest-first default ordering so newly inserted or duplicated rows appear at the top; explicit user sorts remain in effect.
 
 Primary demo flow: open template → inspect KPIs → filter/sort/reorder/pin → edit Nov/Dec/notes → insert five → validate/correct → save → export → repeat with another template.
 

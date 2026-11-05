@@ -95,7 +95,16 @@ describe('forecast column visibility', () => {
     expect(props.suppressDragLeaveHidesColumns).toBe(true);
     expect(props.rowModelType).toBe('infinite');
     expect(props.pagination).toBe(true);
-    expect(props.paginationPageSize).toBe(100);
+    expect(props.paginationPageSize).toBe(200);
+    expect(props.paginationPageSizeSelector).toEqual([200, 500, 1000, 1500]);
+    expect(props.rowSelection).toEqual({
+      mode: 'multiRow',
+      headerCheckbox: false,
+      selectAll: 'currentPage',
+    });
+    expect(props.selectionColumnDef.headerComponent.name).toBe(
+      'SelectAllRowsHeader',
+    );
     expect(
       props.columnDefs.find((column) => column.colId === 'NOV_FORECAST').filter,
     ).toBe('agNumberColumnFilter');

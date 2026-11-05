@@ -16,25 +16,47 @@
 .brand-lockup {
   display: flex;
   align-items: center;
-  gap: 12px;
-  color: #404451;
+  gap: 10px;
+  color: #4a6fe3;
   font-size: 13px;
 }
 .brand-lockup strong {
-  color: #232632;
-  font-size: 17px;
-  letter-spacing: -0.3px;
+  color: #4a6fe3;
+  font-size: 21px;
+  font-style: italic;
+  font-weight: 700;
+  letter-spacing: -0.45px;
 }
 .brand-mark {
-  display: grid;
-  place-items: center;
-  width: 27px;
-  height: 27px;
-  border-radius: 7px;
-  color: #fff;
-  background: #19233d;
-  font-size: 14px;
-  font-weight: 700;
+  display: block;
+  flex: 0 0 auto;
+  width: 54px;
+  height: 56px;
+  overflow: visible;
+}
+.brand-shield-shadow,
+.brand-shield,
+.brand-shield-inner,
+.brand-monogram {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.brand-shield-shadow {
+  stroke: #e0e7ff;
+  stroke-width: 3;
+}
+.brand-shield {
+  stroke: #7892f2;
+  stroke-width: 2.4;
+}
+.brand-shield-inner {
+  stroke: #c9d5ff;
+  stroke-width: 1.5;
+}
+.brand-monogram {
+  stroke: #7892f2;
+  stroke-width: 2;
 }
 .brand-divider {
   height: 20px;
@@ -346,17 +368,14 @@ main {
 }
 .brand-lockup strong {
   color: #4a6fe3;
-  font-size: 19px;
+  font-size: 21px;
+  font-style: italic;
+  font-weight: 700;
+  letter-spacing: -0.45px;
 }
 .brand-mark {
-  width: 39px;
-  height: 43px;
-  border: 2px solid #7d98f1;
-  border-radius: 48% 48% 45% 45%;
-  color: #6282e8;
-  background: #fff;
-  clip-path: polygon(50% 0, 100% 14%, 96% 67%, 50% 100%, 4% 67%, 0 14%);
-  font-size: 17px;
+  width: 54px;
+  height: 56px;
 }
 .profile-display {
   display: inline-flex;
@@ -398,9 +417,6 @@ main {
 }
 .primary-nav a.active {
   border-bottom-color: #fff;
-}
-.primary-nav .budget-nav-link {
-  display: none;
 }
 main {
   padding: 17px 34px 32px;

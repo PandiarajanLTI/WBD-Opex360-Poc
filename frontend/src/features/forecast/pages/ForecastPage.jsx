@@ -6,6 +6,7 @@ import BulkUpdatePanel from '../components/BulkUpdatePanel';
 import CreateForecastViewPanel from '../components/CreateForecastViewPanel';
 import RequiredDimensionsDialog from '../components/RequiredDimensionsDialog';
 import { createForecastColumns, MONTH_COLUMNS } from '../models/columns';
+import SelectAllRowsHeader from '../../shared/SelectAllRowsHeader';
 import { forecastService } from '../services/forecastService';
 import {
   limitPinnedDescriptorColumns,
@@ -14,7 +15,7 @@ import {
   saveColumnState,
 } from '../utils/columnState';
 import { applyPasteToGrid, parseClipboardText } from '../../shared/clipboard';
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 200;
 const CACHE_BLOCK_SIZE = 200;
 const SUMMARY_COLUMN_DEFS = [
   {
@@ -346,11 +347,17 @@ export default function ForecastPage() {
     if (!api) return;
     event.preventDefault();
     const matrix = parseClipboardText(event.clipboardData.getData('text'));
-    const changed = applyPasteToGrid(api, matrix);
+    const changed = applyPasteToGrid(api, matrix, {
+      allowFullRowPaste: activeLayoutView !== 'summary',
+    });
+    const emptyPasteMessage =
+      activeLayoutView === 'summary'
+        ? 'Nothing pasted. Switch to a detail view to paste forecast rows.'
+        : 'Nothing pasted. Paste a full row or focus an editable cell (Nov/Dec/Notes).';
     setMessage(
       changed.length
         ? `Pasted into ${changed.length} row(s). Save to persist the changes.`
-        : 'Nothing pasted. Focus an editable cell (Nov/Dec/Notes) first.',
+        : emptyPasteMessage,
     );
   };
   const resetLayout = () => {
@@ -692,7 +699,7 @@ export default function ForecastPage() {
               maxBlocksInCache={5}
               pagination
               paginationPageSize={PAGE_SIZE}
-              paginationPageSizeSelector={[50, 100, 200]}
+              paginationPageSizeSelector={[200, 500, 1000, 1500]}
               getRowId={({ data }) =>
                 String(
                   data.UNIQ_ID ??
@@ -702,8 +709,13 @@ export default function ForecastPage() {
               rowSelection={
                 activeLayoutView === 'summary'
                   ? undefined
-                  : { mode: 'multiRow', headerCheckbox: false }
+                  : {
+                      mode: 'multiRow',
+                      headerCheckbox: false,
+                      selectAll: 'currentPage',
+                    }
               }
+              selectionColumnDef={{ headerComponent: SelectAllRowsHeader }}
               readOnlyEdit={activeLayoutView === 'summary'}
               stopEditingWhenCellsLoseFocus
               suppressDragLeaveHidesColumns

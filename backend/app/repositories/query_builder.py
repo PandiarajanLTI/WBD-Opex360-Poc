@@ -6,6 +6,62 @@ class BuiltQuery:
     sql: str
     params: dict[str, Any]
 ALLOWED_COLUMNS = {"UNIQ_ID","TEMPLATE_NAME","VERSION","COMPANY_CODE","PROFIT_CENTER","COST_CENTER","FSI_ACCOUNT","GEOGRAPHY","BRAND","NOTES","JAN_FORECAST","FEB_FORECAST","MAR_FORECAST","APR_FORECAST","MAY_FORECAST","JUN_FORECAST","JUL_FORECAST","AUG_FORECAST","SEP_FORECAST","OCT_FORECAST","NOV_FORECAST","DEC_FORECAST","FY_WORKING_FORECAST"}
+FORECAST_UPDATE_COLUMNS = ALLOWED_COLUMNS - {
+    "UNIQ_ID",
+    "TEMPLATE_NAME",
+    "FY_WORKING_FORECAST",
+}
+BUDGET_COLUMNS = (
+    "COSTCENTER",
+    "COSTCENTER_NAME",
+    "L3",
+    "L4",
+    "L5",
+    "L6",
+    "L7",
+    "CLOSED",
+    "FUNCTIONAL_AREA",
+    "FUNCTIONAL_AREA_DESCRIPTION",
+    "COR_SGA_CLASSIFICATION",
+    "COMPANY_CODE",
+    "COMPANY_CODE_DESCRIPTION",
+    "PROFIT_CENTER",
+    "PROFIT_CENTER_DESCRIPTION",
+    "DEFAULT_BRAND",
+    "DEFAULT_GEOGRAOPHY",
+    "LEGACY_SYSTEM",
+    "FUNCTION",
+    "SUBFUNCTION",
+    "COE_TEAM",
+    "COE_SUB_TEAM",
+    "COE_POC",
+    "BU_POC",
+    "BUDGET_HOLDER",
+    "REGION",
+    "LOCATION",
+    "CITY",
+    "CUSTOM_1",
+    "CUSTOM_2",
+    "CUSTOM_3",
+    "UPDATED_ON",
+    "UPDATED_BY",
+    "USER_ID",
+)
+BUDGET_UPDATE_COLUMNS = {
+    "FUNCTION",
+    "SUBFUNCTION",
+    "COE_TEAM",
+    "COE_SUB_TEAM",
+    "COE_POC",
+    "BU_POC",
+    "BUDGET_HOLDER",
+    "REGION",
+    "LOCATION",
+    "CITY",
+    "CUSTOM_1",
+    "CUSTOM_2",
+    "CUSTOM_3",
+}
 SELECT_COLUMNS = ", ".join(sorted(ALLOWED_COLUMNS))
 
 
@@ -199,6 +255,6 @@ def build_grid_query(table: str, template_name: str, request: GridQuery) -> Buil
     where = ["TEMPLATE_NAME = %(template_name)s"]
     params: dict[str, Any] = {"template_name": template_name, "limit": request.endRow - request.startRow, "offset": request.startRow}
     where.extend(build_filter_clauses(request.filterModel, ALLOWED_COLUMNS, params))
-    order_sql = build_order_clause(request.sortModel, ALLOWED_COLUMNS, "UNIQ_ID ASC")
+    order_sql = build_order_clause(request.sortModel, ALLOWED_COLUMNS, "UNIQ_ID DESC")
     sql = f"SELECT {SELECT_COLUMNS} FROM {table} WHERE {' AND '.join(where)} ORDER BY {order_sql} LIMIT %(limit)s OFFSET %(offset)s"
     return BuiltQuery(sql, params)

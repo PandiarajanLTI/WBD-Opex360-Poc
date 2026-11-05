@@ -3,6 +3,9 @@ from app.core.config import Settings
 from app.db.snowflake import SnowflakeConnectionFactory
 from app.repositories.query_builder import (
     ALLOWED_COLUMNS,
+    BUDGET_COLUMNS,
+    BUDGET_UPDATE_COLUMNS,
+    FORECAST_UPDATE_COLUMNS,
     build_filter_clauses,
     build_grid_query,
     build_order_clause,
@@ -87,7 +90,6 @@ class SnowflakeForecastRepository:
         )[0]["TOTAL"]
         return rows, total
     def save(self, template_name, rows):
-        editable = {"NOV_FORECAST","DEC_FORECAST","NOTES"}
         with self.factory.connection() as connection:
             cursor = connection.cursor()
             for row in rows:
@@ -107,7 +109,7 @@ class SnowflakeForecastRepository:
                         },
                     )
                     continue
-                fields = [field for field in editable if field in row]
+                fields = [field for field in FORECAST_UPDATE_COLUMNS if field in row]
                 if not fields: continue
                 assignments = ", ".join(f"{field} = %({field})s" for field in fields); params = {field:row[field] for field in fields}; params["uniq_id"] = row["UNIQ_ID"]; cursor.execute(f"UPDATE {self.settings.snowflake_forecast_table} SET {assignments} WHERE UNIQ_ID = %(uniq_id)s", params)
             connection.commit()
@@ -115,8 +117,8 @@ class SnowflakeForecastRepository:
     def valid_combination(self, company_code, cost_center, profit_center):
         table=self.settings.snowflake_mapping_table; rows=self._fetch(f"SELECT COUNT(*) AS TOTAL FROM {table} WHERE COMPANY_CODE=%(company)s AND COST_CENTER=%(cost)s AND PROFIT_CENTER=%(profit)s AND COALESCE(CLOSED,'NO') != 'YES'", {"company":company_code,"cost":cost_center,"profit":profit_center}); return rows[0]["TOTAL"] > 0
     def budget_query(self, request):
-        columns = "COSTCENTER, COSTCENTER_NAME, COMPANY_CODE, PROFIT_CENTER, FUNCTION, SUBFUNCTION, BUDGET_HOLDER, REGION, LOCATION, CITY"
-        allowed_columns = {column.strip() for column in columns.split(",")}
+        columns = ", ".join(BUDGET_COLUMNS)
+        allowed_columns = set(BUDGET_COLUMNS)
         params = {
             "limit": request.endRow - request.startRow,
             "offset": request.startRow,
@@ -140,11 +142,10 @@ class SnowflakeForecastRepository:
         )[0]["TOTAL"]
         return rows, total
     def budget_save(self, rows):
-        editable = {"FUNCTION","SUBFUNCTION","COE_TEAM","COE_SUB_TEAM","COE_POC","BU_POC","BUDGET_HOLDER","REGION","LOCATION","CITY","CUSTOM_1","CUSTOM_2","CUSTOM_3"}
         with self.factory.connection() as connection:
             cursor = connection.cursor()
             for row in rows:
-                fields = [field for field in editable if field in row]
+                fields = [field for field in BUDGET_UPDATE_COLUMNS if field in row]
                 if not fields or not row.get("COSTCENTER"): continue
                 assignments = ", ".join(f"{field} = %({field})s" for field in fields); params = {field:row[field] for field in fields}; params["costcenter"] = row["COSTCENTER"]; cursor.execute(f"UPDATE {self.settings.snowflake_budget_table} SET {assignments} WHERE COSTCENTER = %(costcenter)s", params)
             connection.commit()

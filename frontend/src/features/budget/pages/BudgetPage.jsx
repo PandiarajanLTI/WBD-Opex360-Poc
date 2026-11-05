@@ -3,6 +3,7 @@ import { AgGridReact } from 'ag-grid-react';
 import { apiJson } from '../../../services/api/apiClient';
 import BulkUpdatePanel from '../../forecast/components/BulkUpdatePanel';
 import { applyPasteToGrid, parseClipboardText } from '../../shared/clipboard';
+import SelectAllRowsHeader from '../../shared/SelectAllRowsHeader';
 
 const EDITABLE = new Set([
   'FUNCTION',
@@ -22,18 +23,42 @@ const EDITABLE = new Set([
 const FIELDS = [
   'COSTCENTER',
   'COSTCENTER_NAME',
+  'L3',
+  'L4',
+  'L5',
+  'L6',
+  'L7',
+  'CLOSED',
+  'FUNCTIONAL_AREA',
+  'FUNCTIONAL_AREA_DESCRIPTION',
+  'COR_SGA_CLASSIFICATION',
   'COMPANY_CODE',
+  'COMPANY_CODE_DESCRIPTION',
   'PROFIT_CENTER',
+  'PROFIT_CENTER_DESCRIPTION',
+  'DEFAULT_BRAND',
+  'DEFAULT_GEOGRAOPHY',
+  'LEGACY_SYSTEM',
   'FUNCTION',
   'SUBFUNCTION',
+  'COE_TEAM',
+  'COE_SUB_TEAM',
+  'COE_POC',
+  'BU_POC',
   'BUDGET_HOLDER',
   'REGION',
   'LOCATION',
   'CITY',
+  'CUSTOM_1',
+  'CUSTOM_2',
+  'CUSTOM_3',
+  'UPDATED_ON',
+  'UPDATED_BY',
+  'USER_ID',
 ];
 const BULK_FIELDS = FIELDS.filter((f) => EDITABLE.has(f)).map((field) => ({
   field,
-  label: field.replace('_', ' '),
+  label: field.split('_').join(' '),
   type: 'text',
 }));
 const STORAGE_KEY = 'opex360:grid:budget';
@@ -84,7 +109,7 @@ export default function BudgetPage() {
         field,
         colId: field,
         editable: EDITABLE.has(field),
-        pinned: EDITABLE.has(field) ? null : 'left',
+        pinned: field === 'COSTCENTER' ? 'left' : null,
         minWidth: 150,
         filter: 'agTextColumnFilter',
       })),
@@ -94,7 +119,8 @@ export default function BudgetPage() {
     () => ({
       sortable: true,
       filter: true,
-      floatingFilter: true,
+      floatingFilter: false,
+      suppressHeaderMenuButton: false,
       resizable: true,
       minWidth: 150,
     }),
@@ -145,6 +171,7 @@ export default function BudgetPage() {
     const changed = applyPasteToGrid(
       api,
       parseClipboardText(event.clipboardData.getData('text')),
+      { editableOnly: true },
     );
     setMessage(`Pasted into ${changed.length} row(s). Save to persist.`);
   };
@@ -179,10 +206,10 @@ export default function BudgetPage() {
       )}
       <div className="page-heading">
         <div>
-          <h1>Budget holder mapping</h1>
+          <h1>Budget Holder</h1>
           <p>
-            Schema-led editable cost-center attributes. Filter by column or edit
-            cells inline.
+            Review all budget table fields and update editable attributes inline
+            or in bulk.
           </p>
         </div>
         <div className="actions">
@@ -214,9 +241,14 @@ export default function BudgetPage() {
             cacheBlockSize={200}
             maxBlocksInCache={5}
             pagination
-            paginationPageSize={100}
-            paginationPageSizeSelector={[50, 100, 200]}
-            rowSelection={{ mode: 'multiRow', headerCheckbox: false }}
+            paginationPageSize={200}
+            paginationPageSizeSelector={[200, 500, 1000, 1500]}
+            rowSelection={{
+              mode: 'multiRow',
+              headerCheckbox: false,
+              selectAll: 'currentPage',
+            }}
+            selectionColumnDef={{ headerComponent: SelectAllRowsHeader }}
             stopEditingWhenCellsLoseFocus
             suppressDragLeaveHidesColumns
             getRowId={({ data }) => data.COSTCENTER}
