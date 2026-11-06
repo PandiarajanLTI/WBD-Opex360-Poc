@@ -13,6 +13,58 @@ const IMMUTABLE_COLUMNS = new Set([
   'COSTCENTER',
 ]);
 
+export function isFullRowPaste(api, matrix) {
+  const columns = api
+    .getAllDisplayedColumns()
+    .filter((column) => column.getColDef().field);
+  return (
+    matrix.length > 0 &&
+    columns.length > 0 &&
+    matrix.every((cells) => cells.length === columns.length)
+  );
+}
+
+export function createRowsFromFullRowPaste(
+  api,
+  matrix,
+  { templateName, version, createId },
+) {
+  const columns = api
+    .getAllDisplayedColumns()
+    .filter((column) => column.getColDef().field);
+  if (!isFullRowPaste(api, matrix)) return [];
+
+  return matrix.map((cells) => {
+    const row = {
+      UNIQ_ID: createId(),
+      TEMPLATE_NAME: templateName,
+      VERSION: version,
+      INSERTED: 'Y',
+      __editedFields: [],
+      __editedAt: Date.now(),
+    };
+    cells.forEach((raw, index) => {
+      const column = columns[index];
+      const field = column.getColDef().field;
+      if (IMMUTABLE_COLUMNS.has(field) || field === 'UPDATED_TS') return;
+      const value = column.getColDef().valueParser
+        ? column.getColDef().valueParser({
+            newValue: raw.trim(),
+            oldValue: undefined,
+            data: row,
+            column,
+            colDef: column.getColDef(),
+            api,
+          })
+        : raw;
+      if (typeof value === 'number' && Number.isNaN(value)) return;
+      row[field] = value;
+      row.__editedFields.push(field);
+    });
+    return row;
+  });
+}
+
 // Full-width row pastes start at the first data column; other pastes start at the focused cell.
 export function applyPasteToGrid(
   api,

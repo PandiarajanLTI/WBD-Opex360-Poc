@@ -1,19 +1,38 @@
 import { apiJson, apiRequest } from '../../../services/api/apiClient';
+
+const inFlightRequests = new Map();
+
+function shareInFlightRequest(key, request) {
+  const existing = inFlightRequests.get(key);
+  if (existing) return existing;
+
+  const pending = Promise.resolve().then(request);
+  inFlightRequests.set(key, pending);
+  pending.finally(() => {
+    if (inFlightRequests.get(key) === pending) inFlightRequests.delete(key);
+  }).catch(() => {});
+  return pending;
+}
+
 export const forecastService = {
-  getMetadata: (name, signal) =>
-    apiJson(`/templates/${encodeURIComponent(name)}/metadata`, { signal }),
-  queryRows: (name, request, signal) =>
-    apiJson(`/templates/${encodeURIComponent(name)}/rows/query`, {
-      method: 'POST',
-      body: JSON.stringify(request),
-      signal,
-    }),
-  querySummaryRows: (name, request, signal) =>
-    apiJson(`/templates/${encodeURIComponent(name)}/rows/summary`, {
-      method: 'POST',
-      body: JSON.stringify(request),
-      signal,
-    }),
+  getMetadata: (name) => {
+    const url = `/templates/${encodeURIComponent(name)}/metadata`;
+    return shareInFlightRequest(`GET:${url}`, () => apiJson(url));
+  },
+  queryRows: (name, request) => {
+    const url = `/templates/${encodeURIComponent(name)}/rows/query`;
+    const body = JSON.stringify(request);
+    return shareInFlightRequest(`POST:${url}:${body}`, () =>
+      apiJson(url, { method: 'POST', body }),
+    );
+  },
+  querySummaryRows: (name, request) => {
+    const url = `/templates/${encodeURIComponent(name)}/rows/summary`;
+    const body = JSON.stringify(request);
+    return shareInFlightRequest(`POST:${url}:${body}`, () =>
+      apiJson(url, { method: 'POST', body }),
+    );
+  },
   validateRows: (name, rows) =>
     apiJson(`/templates/${encodeURIComponent(name)}/rows/validate`, {
       method: 'POST',

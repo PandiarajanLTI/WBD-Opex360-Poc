@@ -33,9 +33,10 @@ it('prevents dragging columns outside the budget grid from hiding them', async (
   const props = grid.mock.lastCall[0];
   expect(props.suppressDragLeaveHidesColumns).toBe(true);
   expect(props.rowModelType).toBe('infinite');
+  expect(props.cacheBlockSize).toBe(100);
   expect(props.pagination).toBe(true);
-  expect(props.paginationPageSize).toBe(200);
-  expect(props.paginationPageSizeSelector).toEqual([200, 500, 1000, 1500]);
+  expect(props.paginationPageSize).toBe(100);
+  expect(props.paginationPageSizeSelector).toEqual([100, 200, 500, 1000]);
   expect(props.rowSelection).toEqual({
     mode: 'multiRow',
     headerCheckbox: false,
@@ -90,12 +91,19 @@ it('refreshes the budget rows after a successful save', async () => {
   });
   const props = grid.mock.lastCall[0];
   const purgeInfiniteCache = vi.fn();
-  props.onGridReady({ api: { purgeInfiniteCache } });
+  const applyColumnState = vi.fn();
+  const deselectAll = vi.fn();
+  props.onGridReady({ api: { purgeInfiniteCache, applyColumnState, deselectAll } });
+  const editedRow = { COSTCENTER: 'C001', REGION: 'Europe' };
   act(() => {
-    props.onCellValueChanged({
-      data: { COSTCENTER: 'C001', REGION: 'Europe' },
-    });
+    props.onCellValueChanged({ data: editedRow, colDef: { field: 'REGION' } });
   });
+  expect(editedRow.__editedFields).toEqual(['REGION']);
+  expect(
+    props.columnDefs
+      .find(({ field }) => field === 'REGION')
+      .cellClassRules['recently-edited-cell']({ data: editedRow }),
+  ).toBe(true);
   apiJson.mockResolvedValueOnce({
     message: 'Saved 1 budget holder mapping row(s).',
   });
@@ -114,6 +122,14 @@ it('refreshes the budget rows after a successful save', async () => {
     }),
   );
   expect(purgeInfiniteCache).toHaveBeenCalledOnce();
+  expect(deselectAll).toHaveBeenCalledOnce();
+  expect(screen.getByRole('button', { name: 'Bulk update (0)' }).disabled).toBe(
+    true,
+  );
+  expect(applyColumnState).toHaveBeenCalledWith({
+    state: [{ colId: 'UPDATED_ON', sort: 'desc', sortIndex: 0 }],
+    defaultState: { sort: null },
+  });
   expect(screen.getByRole('button', { name: 'Save' }).disabled).toBe(true);
 });
 

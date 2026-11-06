@@ -14,9 +14,14 @@ import {
   normalizeMovedColumnState,
   saveColumnState,
 } from '../utils/columnState';
-import { applyPasteToGrid, parseClipboardText } from '../../shared/clipboard';
-const PAGE_SIZE = 200;
-const CACHE_BLOCK_SIZE = 200;
+import {
+  applyPasteToGrid,
+  createRowsFromFullRowPaste,
+  isFullRowPaste,
+  parseClipboardText,
+} from '../../shared/clipboard';
+const PAGE_SIZE = 100;
+const CACHE_BLOCK_SIZE = PAGE_SIZE;
 const SUMMARY_COLUMN_DEFS = [
   {
     field: 'FSI_ACCOUNT',
@@ -59,7 +64,14 @@ export default function ForecastPage() {
   const { templateName = '' } = useParams();
   const decodedName = decodeURIComponent(templateName);
   const gridRef = useRef(null);
+  const dashboardRef = useRef(null);
+  const activeRequestsRef = useRef(0);
+  const pendingQueriesRef = useRef(new Map());
+  const nextPastedRowIdRef = useRef(-1);
+  const recentEditsRef = useRef(new Map());
   const dirtyRowsRef = useRef(new Map());
+  const [isGridLoading, setIsGridLoading] = useState(false);
+  const [isMetadataLoading, setIsMetadataLoading] = useState(true);
   const [totalRowCount, setTotalRowCount] = useState(0);
   const [dirtyMap, setDirtyMap] = useState(() => new Map());
   const [rowDialogSeed, setRowDialogSeed] = useState(null);
@@ -68,11 +80,15 @@ export default function ForecastPage() {
   const [metadata, setMetadata] = useState(null);
   const [message, setMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [selectedCount, setSelectedCount] = useState(0);
   const [isBulkUpdateOpen, setIsBulkUpdateOpen] = useState(false);
-  const columnDefs = useMemo(() => createForecastColumns(), []);
+  const columnDefs = useMemo(
+    () => createForecastColumns(metadata?.columns),
+    [metadata?.columns],
+  );
   const [visibleColumnIds, setVisibleColumnIds] = useState(() =>
-    columnDefs.map((column) => column.colId),
+    columnDefs.filter((column) => !column.hide).map((column) => column.colId),
   );
   const [isFieldPickerOpen, setIsFieldPickerOpen] = useState(false);
   const [isRequiredDimensionsOpen, setIsRequiredDimensionsOpen] =
@@ -97,27 +113,86 @@ export default function ForecastPage() {
     [],
   );
   const markDirty = useCallback((row) => {
-    dirtyRowsRef.current = new Map(dirtyRowsRef.current).set(row.UNIQ_ID, row);
-    setDirtyMap((current) => new Map(current).set(row.UNIQ_ID, row));
+    const changed = { ...row };
+    if (row.__editedFields?.length) {
+      changed.__editedFields = row.__editedFields;
+      changed.__editedAt = Date.now();
+    } else {
+      delete changed.__editedFields;
+      delete changed.__editedAt;
+    }
+    Object.assign(row, changed);
+    dirtyRowsRef.current = new Map(dirtyRowsRef.current).set(
+      row.UNIQ_ID,
+      changed,
+    );
+    setDirtyMap((current) => new Map(current).set(row.UNIQ_ID, changed));
   }, []);
+  const closeTransientUi = useCallback(() => {
+    setIsAddRowOpen(false);
+    setRowDialogSeed(null);
+    setIsBulkUpdateOpen(false);
+    setIsCreateViewOpen(false);
+    setIsRequiredDimensionsOpen(false);
+    setIsViewMenuOpen(false);
+    setIsFieldPickerOpen(false);
+    dashboardRef.current
+      ?.querySelectorAll('details[open]')
+      .forEach((details) => {
+        details.open = false;
+      });
+  }, []);
+  const trackGridRequest = (delta) => {
+    activeRequestsRef.current = Math.max(0, activeRequestsRef.current + delta);
+    setIsGridLoading(activeRequestsRef.current > 0);
+  };
+  const decorateRows = (rows, keyField) =>
+    rows.map((row) => {
+      const recent = recentEditsRef.current.get(row[keyField]);
+      return recent
+        ? { ...row, __editedFields: recent.fields, __recentlyUpdated: true }
+        : row;
+    });
+  const prioritizeLatestUpdates = () => {
+    const api = gridRef.current?.api;
+    if (!api) return;
+    api.applyColumnState?.({
+      state: [{ colId: 'UPDATED_TS', sort: 'desc', sortIndex: 0 }],
+      defaultState: { sort: null },
+    });
+    api.purgeInfiniteCache?.();
+  };
   const datasource = useMemo(
     () => ({
       getRows: async (params) => {
+        trackGridRequest(1);
+        const request = {
+          startRow: params.startRow,
+          endRow: params.endRow,
+          sortModel: params.sortModel,
+          filterModel: params.filterModel,
+        };
+        const requestKey = JSON.stringify(['detail', decodedName, request]);
+        let pending = pendingQueriesRef.current.get(requestKey);
         try {
-          const result = await forecastService.queryRows(decodedName, {
-            startRow: params.startRow,
-            endRow: params.endRow,
-            sortModel: params.sortModel,
-            filterModel: params.filterModel,
-          });
+          if (!pending) {
+            pending = forecastService.queryRows(decodedName, request);
+            pendingQueriesRef.current.set(requestKey, pending);
+          }
+          const result = await pending;
           setTotalRowCount(result.totalRowCount);
-          const visibleRows = result.rows.map(
+          const visibleRows = decorateRows(result.rows, 'UNIQ_ID').map(
             (row) => dirtyRowsRef.current.get(row.UNIQ_ID) ?? row,
           );
           params.successCallback(visibleRows, result.totalRowCount);
         } catch (requestError) {
           setMessage(requestError.message);
           params.failCallback();
+        } finally {
+          if (pendingQueriesRef.current.get(requestKey) === pending) {
+            pendingQueriesRef.current.delete(requestKey);
+          }
+          trackGridRequest(-1);
         }
       },
     }),
@@ -126,18 +201,31 @@ export default function ForecastPage() {
   const summaryDatasource = useMemo(
     () => ({
       getRows: async (params) => {
+        trackGridRequest(1);
+        const request = {
+          startRow: params.startRow,
+          endRow: params.endRow,
+          sortModel: params.sortModel,
+          filterModel: params.filterModel,
+        };
+        const requestKey = JSON.stringify(['summary', decodedName, request]);
+        let pending = pendingQueriesRef.current.get(requestKey);
         try {
-          const result = await forecastService.querySummaryRows(decodedName, {
-            startRow: params.startRow,
-            endRow: params.endRow,
-            sortModel: params.sortModel,
-            filterModel: params.filterModel,
-          });
+          if (!pending) {
+            pending = forecastService.querySummaryRows(decodedName, request);
+            pendingQueriesRef.current.set(requestKey, pending);
+          }
+          const result = await pending;
           setTotalRowCount(result.totalRowCount);
           params.successCallback(result.rows, result.totalRowCount);
         } catch (requestError) {
           setMessage(requestError.message);
           params.failCallback();
+        } finally {
+          if (pendingQueriesRef.current.get(requestKey) === pending) {
+            pendingQueriesRef.current.delete(requestKey);
+          }
+          trackGridRequest(-1);
         }
       },
     }),
@@ -150,10 +238,24 @@ export default function ForecastPage() {
       .then(setMetadata)
       .catch((error) => {
         if (!controller.signal.aborted) setMessage(error.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsMetadataLoading(false);
       });
     return () => controller.abort();
   }, [decodedName]);
   useEffect(() => {
+    const currentState = gridRef.current?.api.getColumnState?.();
+    const state =
+      currentState?.length > 0
+        ? currentState
+        : columnDefs.map(({ colId, hide }) => ({ colId, hide: Boolean(hide) }));
+    setVisibleColumnIds(
+      state.filter((column) => !column.hide).map((column) => column.colId),
+    );
+  }, [columnDefs]);
+  useEffect(() => {
+    if (isMetadataLoading) return;
     try {
       const saved = JSON.parse(
         localStorage.getItem(`opex360:views:${decodedName}`) ?? '[]',
@@ -180,10 +282,18 @@ export default function ForecastPage() {
     } catch (error) {
       setMessage(`Unable to load saved forecast views: ${error.message}`);
     }
-  }, [columnDefs, decodedName]);
+  }, [columnDefs, decodedName, isMetadataLoading]);
   const handleCellValueChanged = useCallback(
-    ({ data }) => markDirty(data),
-    [markDirty],
+    ({ data, colDef }) => {
+      closeTransientUi();
+      const editedFields = new Set(data.__editedFields ?? []);
+      if (colDef?.field) editedFields.add(colDef.field);
+      data.__editedFields = [...editedFields];
+      data.__editedAt = Date.now();
+      markDirty(data);
+      gridRef.current?.api.refreshCells?.({ force: true });
+    },
+    [closeTransientUi, markDirty],
   );
   const handleGridReady = useCallback(
     ({ api }) => {
@@ -297,10 +407,9 @@ export default function ForecastPage() {
     setIsAddRowOpen(true);
   };
   const handleRowCreated = (notice) => {
-    setIsAddRowOpen(false);
-    setRowDialogSeed(null);
+    closeTransientUi();
     setMessage(notice);
-    gridRef.current?.api.purgeInfiniteCache?.();
+    prioritizeLatestUpdates();
   };
   const applyBulkUpdate = useCallback(
     (field, value) => {
@@ -309,14 +418,18 @@ export default function ForecastPage() {
       const selectedNodes = gridRef.current?.api.getSelectedNodes() ?? [];
       selectedNodes.forEach((node) => {
         node.setDataValue(field, value);
-        markDirty({ ...node.data, [field]: value });
+        node.data.__editedFields = [
+          ...new Set([...(node.data.__editedFields ?? []), field]),
+        ];
+        node.data.__editedAt = Date.now();
+        markDirty(node.data);
       });
-      setIsBulkUpdateOpen(false);
+      closeTransientUi();
       setMessage(
         `Applied ${field} to ${selectedRows.length} row(s). Save to persist the changes.`,
       );
     },
-    [markDirty],
+    [closeTransientUi, markDirty],
   );
   const save = async () => {
     if (!dirtyRows.length || isSaving) return;
@@ -334,23 +447,72 @@ export default function ForecastPage() {
       return;
     setIsSaving(true);
     try {
-      const result = await forecastService.saveRows(decodedName, dirtyRows);
+      const savePayload = dirtyRows.map(
+        ({ __editedFields, __editedAt, __recentlyUpdated, ...row }) => row,
+      );
+      const result = await forecastService.saveRows(decodedName, savePayload);
+      dirtyRows.forEach((row) => {
+        recentEditsRef.current.set(row.UNIQ_ID, {
+          fields: row.__editedFields ?? [],
+          updatedAt: Date.now(),
+        });
+      });
       setMessage(result.message);
       dirtyRowsRef.current = new Map();
       setDirtyMap(new Map());
-      gridRef.current?.api.purgeInfiniteCache?.();
+      closeTransientUi();
+      gridRef.current?.api.deselectAll?.();
+      setSelectedCount(0);
+      prioritizeLatestUpdates();
     } catch (e) {
       setMessage(e.message);
     } finally {
       setIsSaving(false);
     }
   };
-  const handlePaste = (event) => {
+  const handlePaste = async (event) => {
     if (['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return;
     const api = gridRef.current?.api;
     if (!api) return;
     event.preventDefault();
     const matrix = parseClipboardText(event.clipboardData.getData('text'));
+    if (
+      activeLayoutView !== 'summary' &&
+      isFullRowPaste(api, matrix)
+    ) {
+      const newRows = createRowsFromFullRowPaste(api, matrix, {
+        templateName: decodedName,
+        version: metadata?.version ?? '10+2',
+        createId: () => nextPastedRowIdRef.current--,
+      });
+      if (!newRows.length) {
+        setMessage('Nothing pasted. Copy one or more complete forecast rows.');
+        return;
+      }
+      closeTransientUi();
+      setIsSaving(true);
+      trackGridRequest(1);
+      try {
+        const payload = newRows.map(
+          ({ __editedFields, __editedAt, ...row }) => row,
+        );
+        const result = await forecastService.saveRows(decodedName, payload);
+        newRows.forEach((row) => {
+          recentEditsRef.current.set(row.UNIQ_ID, {
+            fields: row.__editedFields,
+            updatedAt: Date.now(),
+          });
+        });
+        setMessage(`Inserted ${newRows.length} pasted row(s). ${result.message}`);
+        prioritizeLatestUpdates();
+      } catch (error) {
+        setMessage(error.message);
+      } finally {
+        setIsSaving(false);
+        trackGridRequest(-1);
+      }
+      return;
+    }
     const changed = applyPasteToGrid(api, matrix, {
       allowFullRowPaste: activeLayoutView !== 'summary',
     });
@@ -363,6 +525,7 @@ export default function ForecastPage() {
         ? `Pasted into ${changed.length} row(s). Save to persist the changes.`
         : emptyPasteMessage,
     );
+      if (changed.length) closeTransientUi();
   };
   const resetLayout = () => {
     localStorage.removeItem(`opex360:grid:${decodedName}`);
@@ -370,10 +533,14 @@ export default function ForecastPage() {
     setActiveLayoutView('full');
   };
   const handleExport = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
     try {
       await forecastService.exportRows(decodedName);
     } catch (error) {
       setMessage(error.message);
+    } finally {
+      setIsExporting(false);
     }
   };
   const summaryToKpiView = () => {
@@ -388,7 +555,22 @@ export default function ForecastPage() {
     kpis.find(([label]) => label.toLowerCase().includes('prior'))?.[1] ?? 0,
   );
   return (
-    <div className="forecast-dashboard forecast-detail-dashboard">
+    <div
+      className="forecast-dashboard forecast-detail-dashboard"
+      ref={dashboardRef}
+    >
+      {(isGridLoading || isMetadataLoading || isSaving || isExporting) && (
+        <output className="api-loading-overlay" aria-live="polite">
+          <span className="api-loading-card">
+            <span className="loading-spinner" aria-hidden="true" />
+            {isSaving
+              ? 'Saving forecast…'
+              : isExporting
+                ? 'Preparing forecast download…'
+                : 'Loading forecast data…'}
+          </span>
+        </output>
+      )}
       {isBulkUpdateOpen && (
         <BulkUpdatePanel
           selectedCount={selectedCount}
@@ -543,11 +725,12 @@ export default function ForecastPage() {
           <button
             aria-label="Download forecast"
             className="icon-action"
+            disabled={isExporting}
             onClick={handleExport}
-            title="Download forecast"
+            title={isExporting ? 'Preparing forecast download' : 'Download forecast'}
             type="button"
           >
-            ↓
+            {isExporting ? '…' : '↓'}
           </button>
           <button
             className="primary"
@@ -635,7 +818,7 @@ export default function ForecastPage() {
                   >
                     <summary>☷ &nbsp; Select Fields</summary>
                     <div className="field-picker-menu">
-                      {columnDefs.map((column) => (
+                      {columnDefs.filter((column) => !column.hide).map((column) => (
                         <label key={column.colId}>
                           <input
                             checked={visibleColumnIds.includes(column.colId)}
@@ -681,8 +864,8 @@ export default function ForecastPage() {
                   <button onClick={resetLayout} type="button">
                     Reset layout
                   </button>
-                  <button onClick={handleExport} type="button">
-                    Export forecast
+                  <button disabled={isExporting} onClick={handleExport} type="button">
+                    {isExporting ? 'Exporting…' : 'Export forecast'}
                   </button>
                 </div>
               </details>
@@ -705,13 +888,17 @@ export default function ForecastPage() {
               maxBlocksInCache={5}
               pagination
               paginationPageSize={PAGE_SIZE}
-              paginationPageSizeSelector={[200, 500, 1000, 1500]}
+              paginationPageSizeSelector={[100, 200, 500, 1000]}
               getRowId={({ data }) =>
                 String(
                   data.UNIQ_ID ??
                     `${data.FSI_ACCOUNT ?? ''}:${data.GEOGRAPHY ?? ''}`,
                 )
               }
+              rowClassRules={{
+                'recently-updated-row': ({ data }) =>
+                  Boolean(data?.__recentlyUpdated || data?.INSERTED === 'Y'),
+              }}
               rowSelection={
                 activeLayoutView === 'summary'
                   ? undefined
