@@ -62,7 +62,7 @@ def build_filter_clauses(filter_model,allowed_columns,params):
     return clauses
 
 def build_order_clause(sort_model,allowed_columns,fallback):
-    parts=[f'{x.colId} {x.sort.upper()}' for x in sort_model if x.colId in allowed_columns]
+    parts=[f'{x.colId} {x.sort.upper()}' + (' NULLS LAST' if x.colId=='UPDATED_TS' and x.sort=='desc' else '') for x in sort_model if x.colId in allowed_columns]
     return ','.join(parts) if parts else fallback
 
 def selected_columns(request):

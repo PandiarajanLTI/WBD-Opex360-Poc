@@ -1,5 +1,6 @@
 from functools import lru_cache
-from pydantic import Field, field_validator
+from pathlib import Path
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,9 +9,9 @@ class Settings(BaseSettings):
     data_repository: str = "snowflake"
     cors_origins: str = "http://localhost:5173"
 
-    snowflake_account: str = "QDEFQVK-BF89605"
-    snowflake_user: str = "VISHWASWAROOP007"
-    snowflake_password: str = "Vishwaswaroop@123"
+    snowflake_account: str = ""
+    snowflake_user: str = ""
+    snowflake_password: SecretStr = SecretStr("")
     snowflake_warehouse: str = "COMPUTE_WH"
     snowflake_database: str = "OPEX360_POC"
     snowflake_schema: str = "FORECAST"
@@ -31,7 +32,10 @@ class Settings(BaseSettings):
     snowflake_query_tag: str = "wbd-opex360-fastapi"
     max_page_size: int = Field(default=1000, ge=1, le=5000)
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).resolve().parents[2] / ".env",
+        extra="ignore",
+    )
 
     @field_validator("data_repository")
     @classmethod

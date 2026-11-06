@@ -19,6 +19,8 @@ export default function AddForecastRowPanel({
 }) {
   const [values, setValues] = useState(() => ({
     ...Object.fromEntries(REQUIRED_FIELDS.map(([field]) => [field, ''])),
+    CURRENCY: 'USD',
+    STATUS: 'Working',
     NOTES: '',
     NOV_FORECAST: '0',
     DEC_FORECAST: '0',
@@ -35,13 +37,20 @@ export default function AddForecastRowPanel({
     setError('');
     setIsSaving(true);
     const row = {
-      ...values,
       UNIQ_ID: -1,
       TEMPLATE_NAME: templateName,
       VERSION: version,
-      INSERTED: 'Y',
+      FSI_ACCOUNT: values.FSI_ACCOUNT,
+      GEOGRAPHY: values.GEOGRAPHY,
+      BRAND: values.BRAND,
+      COMPANY_CODE: values.COMPANY_CODE,
+      COST_CENTER: values.COST_CENTER,
+      PROFIT_CENTER: values.PROFIT_CENTER,
+      CURRENCY: values.CURRENCY || 'USD',
+      STATUS: values.STATUS || 'Working',
       NOV_FORECAST: Number(values.NOV_FORECAST || 0),
       DEC_FORECAST: Number(values.DEC_FORECAST || 0),
+      NOTES: values.NOTES,
     };
     try {
       const result = await forecastService.saveRows(templateName, [row]);
