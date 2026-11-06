@@ -19,11 +19,22 @@ class SnowflakeConnectionFactory:
         self._lock = Lock()
 
     def _new_connection(self):
+        if not all(
+            (
+                self.settings.snowflake_account,
+                self.settings.snowflake_user,
+                self.settings.snowflake_password.get_secret_value(),
+            )
+        ):
+            raise RuntimeError(
+                "Set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in backend/.env."
+            )
+
         import snowflake.connector
         return snowflake.connector.connect(
             account=self.settings.snowflake_account,
             user=self.settings.snowflake_user,
-            password=self.settings.snowflake_password,
+            password=self.settings.snowflake_password.get_secret_value(),
             warehouse=self.settings.snowflake_warehouse,
             database=self.settings.snowflake_database,
             schema=self.settings.snowflake_schema,

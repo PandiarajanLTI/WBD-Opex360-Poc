@@ -75,12 +75,33 @@ export default function BudgetPage() {
   const [dirty, setDirty] = useState({});
   const [selectedCount, setSelectedCount] = useState(0);
   const [isBulkOpen, setIsBulkOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isGridLoading, setIsGridLoading] = useState(false);
   const [message, setMessage] = useState('');
   const apiRef = useRef(null);
+  const activeRequestsRef = useRef(0);
   const dirtyRef = useRef({});
+  const recentEditsRef = useRef({});
+  const trackGridRequest = (delta) => {
+    activeRequestsRef.current = Math.max(0, activeRequestsRef.current + delta);
+    setIsGridLoading(activeRequestsRef.current > 0);
+  };
+  const markDirty = (row, field) => {
+    const updated = {
+      ...row,
+      __editedFields: [
+        ...new Set([...(row.__editedFields ?? []), ...(field ? [field] : [])]),
+      ],
+      __editedAt: Date.now(),
+    };
+    Object.assign(row, updated);
+    dirtyRef.current = { ...dirtyRef.current, [row.COSTCENTER]: updated };
+    setDirty((current) => ({ ...current, [row.COSTCENTER]: updated }));
+  };
   const datasource = useMemo(
     () => ({
       getRows: async (params) => {
+        trackGridRequest(1);
         try {
           const result = await apiJson('/budget/query', {
             method: 'POST',
@@ -91,13 +112,23 @@ export default function BudgetPage() {
               filterModel: params.filterModel,
             }),
           });
-          const visibleRows = result.rows.map(
-            (row) => dirtyRef.current[row.COSTCENTER] ?? row,
-          );
+          const visibleRows = result.rows.map((row) => {
+            const recent = recentEditsRef.current[row.COSTCENTER];
+            const fresh = recent
+              ? {
+                  ...row,
+                  __editedFields: recent.fields,
+                  __recentlyUpdated: true,
+                }
+              : row;
+            return dirtyRef.current[row.COSTCENTER] ?? fresh;
+          });
           params.successCallback(visibleRows, result.totalRowCount);
         } catch (error) {
           setMessage(error.message);
           params.failCallback();
+        } finally {
+          trackGridRequest(-1);
         }
       },
     }),
@@ -112,6 +143,10 @@ export default function BudgetPage() {
         pinned: field === 'COSTCENTER' ? 'left' : null,
         minWidth: 150,
         filter: 'agTextColumnFilter',
+        cellClassRules: {
+          'recently-edited-cell': ({ data }) =>
+            data?.__editedFields?.includes(field) ?? false,
+        },
       })),
     [],
   );
@@ -127,9 +162,15 @@ export default function BudgetPage() {
     [],
   );
 
-  const handleCellValueChanged = useCallback(({ data }) => {
-    dirtyRef.current = { ...dirtyRef.current, [data.COSTCENTER]: data };
-    setDirty((current) => ({ ...current, [data.COSTCENTER]: data }));
+  const handleCellValueChanged = useCallback(({ data, colDef }) => {
+    setIsBulkOpen(false);
+    document
+      .querySelectorAll('.budget-page details[open]')
+      .forEach((details) => {
+        details.open = false;
+      });
+    markDirty(data, colDef?.field);
+    apiRef.current?.refreshCells?.({ force: true });
   }, []);
 
   const handleGridReady = useCallback(({ api }) => {
@@ -156,7 +197,10 @@ export default function BudgetPage() {
   const applyBulk = (field, value) => {
     const api = apiRef.current;
     const selected = api?.getSelectedNodes() ?? [];
-    selected.forEach((node) => node.setDataValue(field, value));
+    selected.forEach((node) => {
+      node.setDataValue(field, value);
+      markDirty({ ...node.data, [field]: value }, field);
+    });
     setIsBulkOpen(false);
     setMessage(
       `Applied ${field} to ${selected.length} row(s). Save to persist the changes.`,
@@ -178,24 +222,51 @@ export default function BudgetPage() {
 
   const save = async () => {
     const changed = Object.values(dirty);
-    if (!changed.length) return;
+    if (!changed.length || isSaving) return;
+    setIsSaving(true);
     try {
+      const payload = changed.map(
+        ({ __editedFields, __editedAt, __recentlyUpdated, ...row }) => row,
+      );
       const result = await apiJson('/budget/bulk-update', {
         method: 'PATCH',
-        body: JSON.stringify({ rows: changed }),
+        body: JSON.stringify({ rows: payload }),
+      });
+      changed.forEach((row) => {
+        recentEditsRef.current[row.COSTCENTER] = {
+          fields: row.__editedFields ?? [],
+          updatedAt: Date.now(),
+        };
       });
       dirtyRef.current = {};
       setDirty({});
+      setIsBulkOpen(false);
+      apiRef.current?.deselectAll?.();
+      setSelectedCount(0);
       setMessage(result.message);
-      apiRef.current?.refreshInfiniteCache();
+      apiRef.current?.applyColumnState?.({
+        state: [{ colId: 'UPDATED_ON', sort: 'desc', sortIndex: 0 }],
+        defaultState: { sort: null },
+      });
+      apiRef.current?.purgeInfiniteCache?.();
     } catch (e) {
       setMessage(e.message);
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const dirtyCount = Object.keys(dirty).length;
   return (
-    <>
+    <div className="budget-page">
+      {(isGridLoading || isSaving) && (
+        <output className="api-loading-overlay" aria-live="polite">
+          <span className="api-loading-card">
+            <span className="loading-spinner" aria-hidden="true" />
+            {isSaving ? 'Saving budget updates…' : 'Loading budget data…'}
+          </span>
+        </output>
+      )}
       {isBulkOpen && (
         <BulkUpdatePanel
           selectedCount={selectedCount}
@@ -224,8 +295,12 @@ export default function BudgetPage() {
           >
             Reset layout
           </button>
-          <button className="primary" disabled={!dirtyCount} onClick={save}>
-            Save {dirtyCount || ''}
+          <button
+            className="primary"
+            disabled={!dirtyCount || isSaving}
+            onClick={save}
+          >
+            {isSaving ? 'Saving…' : `Save ${dirtyCount || ''}`}
           </button>
         </div>
       </div>
@@ -238,11 +313,11 @@ export default function BudgetPage() {
             defaultColDef={defaultColDef}
             datasource={datasource}
             rowModelType="infinite"
-            cacheBlockSize={200}
+            cacheBlockSize={100}
             maxBlocksInCache={5}
             pagination
-            paginationPageSize={200}
-            paginationPageSizeSelector={[200, 500, 1000, 1500]}
+            paginationPageSize={100}
+            paginationPageSizeSelector={[100, 200, 500, 1000]}
             rowSelection={{
               mode: 'multiRow',
               headerCheckbox: false,
@@ -252,6 +327,10 @@ export default function BudgetPage() {
             stopEditingWhenCellsLoseFocus
             suppressDragLeaveHidesColumns
             getRowId={({ data }) => data.COSTCENTER}
+            rowClassRules={{
+              'recently-updated-row': ({ data }) =>
+                Boolean(data?.__recentlyUpdated),
+            }}
             onGridReady={handleGridReady}
             onCellValueChanged={handleCellValueChanged}
             onSelectionChanged={({ api }) =>
@@ -263,6 +342,6 @@ export default function BudgetPage() {
           />
         </div>
       </div>
-    </>
+    </div>
   );
 }

@@ -33,9 +33,10 @@ it('prevents dragging columns outside the budget grid from hiding them', async (
   const props = grid.mock.lastCall[0];
   expect(props.suppressDragLeaveHidesColumns).toBe(true);
   expect(props.rowModelType).toBe('infinite');
+  expect(props.cacheBlockSize).toBe(100);
   expect(props.pagination).toBe(true);
-  expect(props.paginationPageSize).toBe(200);
-  expect(props.paginationPageSizeSelector).toEqual([200, 500, 1000, 1500]);
+  expect(props.paginationPageSize).toBe(100);
+  expect(props.paginationPageSizeSelector).toEqual([100, 200, 500, 1000]);
   expect(props.rowSelection).toEqual({
     mode: 'multiRow',
     headerCheckbox: false,
@@ -82,6 +83,54 @@ it('passes server pagination, sort, and filter options to the budget API', async
     }),
   );
   expect(params.successCallback).toHaveBeenCalledWith([], 0);
+});
+
+it('refreshes the budget rows after a successful save', async () => {
+  await act(async () => {
+    render(<BudgetPage />);
+  });
+  const props = grid.mock.lastCall[0];
+  const purgeInfiniteCache = vi.fn();
+  const applyColumnState = vi.fn();
+  const deselectAll = vi.fn();
+  props.onGridReady({ api: { purgeInfiniteCache, applyColumnState, deselectAll } });
+  const editedRow = { COSTCENTER: 'C001', REGION: 'Europe' };
+  act(() => {
+    props.onCellValueChanged({ data: editedRow, colDef: { field: 'REGION' } });
+  });
+  expect(editedRow.__editedFields).toEqual(['REGION']);
+  expect(
+    props.columnDefs
+      .find(({ field }) => field === 'REGION')
+      .cellClassRules['recently-edited-cell']({ data: editedRow }),
+  ).toBe(true);
+  apiJson.mockResolvedValueOnce({
+    message: 'Saved 1 budget holder mapping row(s).',
+  });
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Save 1' }));
+  });
+
+  expect(apiJson).toHaveBeenCalledWith(
+    '/budget/bulk-update',
+    expect.objectContaining({
+      method: 'PATCH',
+      body: JSON.stringify({
+        rows: [{ COSTCENTER: 'C001', REGION: 'Europe' }],
+      }),
+    }),
+  );
+  expect(purgeInfiniteCache).toHaveBeenCalledOnce();
+  expect(deselectAll).toHaveBeenCalledOnce();
+  expect(screen.getByRole('button', { name: 'Bulk update (0)' }).disabled).toBe(
+    true,
+  );
+  expect(applyColumnState).toHaveBeenCalledWith({
+    state: [{ colId: 'UPDATED_ON', sort: 'desc', sortIndex: 0 }],
+    defaultState: { sort: null },
+  });
+  expect(screen.getByRole('button', { name: 'Save' }).disabled).toBe(true);
 });
 
 it('uses header filter menus like Build Forecasts without a floating filter row', async () => {

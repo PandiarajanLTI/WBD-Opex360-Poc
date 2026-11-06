@@ -1,5 +1,10 @@
 import { expect, it } from 'vitest';
-import { applyPasteToGrid, parseClipboardText } from './clipboard';
+import {
+  applyPasteToGrid,
+  createRowsFromFullRowPaste,
+  isFullRowPaste,
+  parseClipboardText,
+} from './clipboard';
 
 it('parses Excel tab/newline text', () => {
   expect(parseClipboardText('1\t2\r\n3\t4\r\n')).toEqual([
@@ -154,4 +159,40 @@ it('keeps summary rows read-only during full-width paste', () => {
     }),
   ).toEqual([]);
   expect(data).toEqual({ FSI_ACCOUNT: 'A001', GEOGRAPHY: 'NA', ROW_COUNT: 3 });
+});
+
+it('treats a full forecast row paste as a new inserted record', () => {
+  const columns = ['UNIQ_ID', 'TEMPLATE_NAME', 'COMPANY_CODE', 'NOV_FORECAST'].map(
+    (field) => ({
+      getColId: () => field,
+      getColDef: () => ({
+        field,
+        valueParser:
+          field === 'NOV_FORECAST'
+            ? ({ newValue }) => Number(newValue)
+            : undefined,
+      }),
+    }),
+  );
+  const api = { getAllDisplayedColumns: () => columns };
+  const matrix = [['12', 'Other template', 'US02', '450']];
+
+  expect(isFullRowPaste(api, matrix)).toBe(true);
+  expect(
+    createRowsFromFullRowPaste(api, matrix, {
+      templateName: 'Warner Media',
+      version: '10+2',
+      createId: () => -1,
+    }),
+  ).toEqual([
+    expect.objectContaining({
+      UNIQ_ID: -1,
+      TEMPLATE_NAME: 'Warner Media',
+      VERSION: '10+2',
+      INSERTED: 'Y',
+      COMPANY_CODE: 'US02',
+      NOV_FORECAST: 450,
+      __editedFields: ['COMPANY_CODE', 'NOV_FORECAST'],
+    }),
+  ]);
 });

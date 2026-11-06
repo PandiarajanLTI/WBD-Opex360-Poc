@@ -10,12 +10,13 @@ import {
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ForecastPage from './ForecastPage';
-import { createForecastColumns } from '../models/columns';
 
-const { grid, queryRows, querySummaryRows } = vi.hoisted(() => ({
+const { grid, getMetadata, queryRows, querySummaryRows, saveRows } = vi.hoisted(() => ({
   grid: vi.fn(() => null),
+  getMetadata: vi.fn(() => Promise.resolve(null)),
   queryRows: vi.fn(),
   querySummaryRows: vi.fn(),
+  saveRows: vi.fn(),
 }));
 
 vi.mock('ag-grid-react', () => ({ AgGridReact: grid }));
@@ -29,9 +30,10 @@ vi.mock('../hooks/useForecastGrid', () => ({
 }));
 vi.mock('../services/forecastService', () => ({
   forecastService: {
-    getMetadata: () => Promise.resolve(null),
+    getMetadata,
     queryRows,
     querySummaryRows,
+    saveRows,
   },
 }));
 
@@ -55,6 +57,34 @@ async function renderPage() {
 }
 
 describe('forecast column visibility', () => {
+  it('renders every column named in forecast metadata', async () => {
+    getMetadata.mockResolvedValueOnce({
+      columns: [
+        'UNIQ_ID',
+        'TEMPLATE_NAME',
+        'FX_RATE',
+        'DER_PROJECT_NAME',
+        'UPDATED_TS',
+      ],
+      kpis: {},
+    });
+
+    const props = await renderPage();
+    const fields = props.columnDefs.map(({ field }) => field);
+
+    expect(fields).toEqual(
+      expect.arrayContaining([
+        'UNIQ_ID',
+        'FX_RATE',
+        'DER_PROJECT_NAME',
+        'UPDATED_TS',
+      ]),
+    );
+    expect(props.columnDefs.find(({ field }) => field === 'UPDATED_TS').hide).toBe(
+      false,
+    );
+  });
+
   it('restores a saved hidden Brand without resetting the rest of the layout', async () => {
     const saved = [
       { colId: 'TEMPLATE_NAME', pinned: 'left', width: 150, hide: false },
@@ -94,9 +124,10 @@ describe('forecast column visibility', () => {
     expect(api.applyColumnState).not.toHaveBeenCalled();
     expect(props.suppressDragLeaveHidesColumns).toBe(true);
     expect(props.rowModelType).toBe('infinite');
+    expect(props.cacheBlockSize).toBe(100);
     expect(props.pagination).toBe(true);
-    expect(props.paginationPageSize).toBe(200);
-    expect(props.paginationPageSizeSelector).toEqual([200, 500, 1000, 1500]);
+    expect(props.paginationPageSize).toBe(100);
+    expect(props.paginationPageSizeSelector).toEqual([100, 200, 500, 1000]);
     expect(props.rowSelection).toEqual({
       mode: 'multiRow',
       headerCheckbox: false,
@@ -242,6 +273,36 @@ describe('forecast column visibility', () => {
     expect(failCallback).not.toHaveBeenCalled();
   });
 
+  it('coalesces concurrent duplicate requests for the same forecast page', async () => {
+    const props = await renderPage();
+    queryRows.mockResolvedValue({ rows: [{ UNIQ_ID: 1 }], totalRowCount: 1 });
+    const firstSuccess = vi.fn();
+    const secondSuccess = vi.fn();
+    const request = {
+      startRow: 0,
+      endRow: 100,
+      sortModel: [],
+      filterModel: {},
+    };
+
+    await Promise.all([
+      props.datasource.getRows({
+        ...request,
+        successCallback: firstSuccess,
+        failCallback: vi.fn(),
+      }),
+      props.datasource.getRows({
+        ...request,
+        successCallback: secondSuccess,
+        failCallback: vi.fn(),
+      }),
+    ]);
+
+    expect(queryRows).toHaveBeenCalledOnce();
+    expect(firstSuccess).toHaveBeenCalledOnce();
+    expect(secondSuccess).toHaveBeenCalledOnce();
+  });
+
   it('keeps unsaved cell edits visible when a server block is reloaded', async () => {
     const props = await renderPage();
     props.onCellValueChanged({ data: { UNIQ_ID: 7, NOV_FORECAST: 999 } });
@@ -264,5 +325,74 @@ describe('forecast column visibility', () => {
       [{ UNIQ_ID: 7, NOV_FORECAST: 999 }],
       1,
     );
+  });
+
+  it('refreshes forecast rows after a successful save', async () => {
+    const props = await renderPage();
+    const purgeInfiniteCache = vi.fn();
+    const applyColumnState = vi.fn();
+    const deselectAll = vi.fn();
+    props.onGridReady({ api: { purgeInfiniteCache, applyColumnState, deselectAll } });
+    act(() => {
+      props.onSelectionChanged({ api: { getSelectedRows: () => [{ UNIQ_ID: 7 }] } });
+    });
+    act(() => {
+      props.onCellValueChanged({
+        data: { UNIQ_ID: 7, NOV_FORECAST: 999 },
+      });
+    });
+    saveRows.mockResolvedValueOnce({ message: 'Saved 1 row(s).' });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save (1)' }));
+    });
+
+    expect(saveRows).toHaveBeenCalledWith('Warner Media', [
+      { UNIQ_ID: 7, NOV_FORECAST: 999 },
+    ]);
+    expect(purgeInfiniteCache).toHaveBeenCalledOnce();
+    expect(applyColumnState).toHaveBeenCalledWith({
+      state: [{ colId: 'UPDATED_TS', sort: 'desc', sortIndex: 0 }],
+      defaultState: { sort: null },
+    });
+    expect(deselectAll).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: 'Bulk update (0)' }).disabled).toBe(
+      true,
+    );
+    expect(screen.getByRole('button', { name: 'Save' }).disabled).toBe(true);
+  });
+
+  it('closes the add-row dialog and reloads the grid after a successful save', async () => {
+    const props = await renderPage();
+    const purgeInfiniteCache = vi.fn();
+    props.onGridReady({ api: { purgeInfiniteCache } });
+    saveRows.mockResolvedValueOnce({ message: 'Saved 1 row(s).' });
+    fireEvent.click(screen.getByRole('button', { name: 'Insert Row' }));
+    const dialog = screen
+      .getByRole('heading', { name: 'Add forecast row' })
+      .closest('dialog');
+
+    [
+      ['Company code', 'US01'],
+      ['Profit center', 'P001'],
+      ['Cost center', 'C900'],
+      ['FSI account', 'A001'],
+      ['Geography', 'NA'],
+      ['Brand', 'Studio'],
+    ].forEach(([label, value]) => {
+      fireEvent.change(within(dialog).getByLabelText(new RegExp(label, 'i')), {
+        target: { value },
+      });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save row' }));
+    });
+
+    expect(saveRows).toHaveBeenCalledOnce();
+    expect(purgeInfiniteCache).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByRole('heading', { name: 'Add forecast row' }),
+    ).toBeNull();
   });
 });
