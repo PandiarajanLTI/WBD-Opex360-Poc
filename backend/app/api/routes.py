@@ -1,4 +1,4 @@
-import csv, io
+import csv, io, time
 from fastapi import APIRouter, Depends, HTTPException, Response
 from app.api.dependencies import get_forecast_service, get_repository
 from app.schemas.grid import GridQuery, GridResponse, RowsPayload
@@ -48,4 +48,6 @@ def budget_query(request: GridQuery, repository=Depends(get_repository)):
     rows,total=repository.budget_query(request); return GridResponse(rows=rows,totalRowCount=total)
 @router.patch("/budget/bulk-update")
 def budget_bulk_update(payload: RowsPayload, repository=Depends(get_repository)):
-    count=repository.budget_save(payload.rows); return {"updated":count,"message":f"Saved {count} budget holder mapping row(s)."}
+    started=time.perf_counter()
+    count=repository.budget_save(payload.rows)
+    return {"requested":len(payload.rows),"updated":count,"elapsedMs":round((time.perf_counter()-started)*1000,2),"message":f"Saved {count} budget holder mapping row(s)."}

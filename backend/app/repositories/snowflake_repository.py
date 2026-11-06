@@ -48,34 +48,42 @@ class SnowflakeForecastRepository:
     with connection.cursor() as cursor:
      updated=self._bulk_update(cursor,template_name,updates);inserted=0
      for r in inserts:
-      data={**r,'TEMPLATE_NAME':r.get('TEMPLATE_NAME',template_name),'UPDATED_TS':None,'UPDATED_BY':'OPEX360_API','USER_ACTION':'INSERT'}
-      fields=[c for c in TEMPLATE_COLUMNS if c!='UNIQ_ID' and c in data]
-      values=["CURRENT_TIMESTAMP()" if c=='UPDATED_TS' else f"%({c})s" for c in fields]
-      cursor.execute(f"INSERT INTO {self.settings.snowflake_forecast_table} ({','.join(fields)}) VALUES ({','.join(values)})",{c:data.get(c) for c in fields if c!='UPDATED_TS'});inserted+=1
+      data={**r,'TEMPLATE_NAME':r.get('TEMPLATE_NAME',template_name)};fields=[c for c in TEMPLATE_COLUMNS if c!='UNIQ_ID' and c in data]
+      cursor.execute(f"INSERT INTO {self.settings.snowflake_forecast_table} ({','.join(fields)}) VALUES ({','.join('%('+c+')s' for c in fields)})",{c:data.get(c) for c in fields});inserted+=1
     connection.commit()
    except Exception:connection.rollback();raise
   return {'requested':len(rows),'updated':updated,'inserted':inserted}
  def budget_query(self,request):
-  allowed={'COSTCENTER','COSTCENTER_NAME','L3','L4','L5','L6','L7','CLOSED','FUNCTIONAL_AREA','FUNCTIONAL_AREA_DESCRIPTION','COR_SGA_CLASSIFICATION','COMPANY_CODE','COMPANY_CODE_DESCRIPTION','PROFIT_CENTER','PROFIT_CENTER_DESCRIPTION','DEFAULT_BRAND','DEFAULT_GEOGRAOPHY','LEGACY_SYSTEM','FUNCTION','SUBFUNCTION','COE_TEAM','COE_SUB_TEAM','COE_POC','BU_POC','BUDGET_HOLDER','REGION','LOCATION','CITY','CUSTOM_1','CUSTOM_2','CUSTOM_3','UPDATED_ON','UPDATED_BY','USER_ID'}
-  requested=[f'{item.colId} {item.sort.upper()}' + (' NULLS LAST' if item.colId=='UPDATED_ON' and item.sort=='desc' else '') for item in request.sortModel if item.colId in allowed]
-  order=', '.join(requested) if requested else 'UPDATED_ON DESC NULLS LAST, COSTCENTER'
-  rows=self._fetch(f"SELECT *,COUNT(*) OVER() __TOTAL_COUNT FROM {self.settings.snowflake_budget_table} ORDER BY {order} LIMIT %(l)s OFFSET %(o)s",{'l':request.endRow-request.startRow,'o':request.startRow});total=int(rows[0].pop('__TOTAL_COUNT')) if rows else 0;return rows,total
+  rows=self._fetch(f"SELECT *,COUNT(*) OVER() __TOTAL_COUNT FROM {self.settings.snowflake_budget_table} ORDER BY COSTCENTER LIMIT %(l)s OFFSET %(o)s",{'l':request.endRow-request.startRow,'o':request.startRow});total=int(rows[0].pop('__TOTAL_COUNT')) if rows else 0;return rows,total
  def budget_save(self,rows):
-  editable={'FUNCTION','SUBFUNCTION','COE_TEAM','COE_SUB_TEAM','COE_POC','BU_POC','BUDGET_HOLDER','REGION','LOCATION','CITY','CUSTOM_1','CUSTOM_2','CUSTOM_3'}
   if not rows:return 0
+  editable=("FUNCTION","SUBFUNCTION","COE_TEAM","COE_SUB_TEAM","COE_POC","BU_POC","BUDGET_HOLDER","REGION","LOCATION","CITY","CUSTOM_1","CUSTOM_2","CUSTOM_3")
+  groups={}
+  for row in rows:
+   costcenter=row.get("COSTCENTER")
+   if costcenter is None or str(costcenter).strip()=="":continue
+   fields=tuple(c for c in editable if c in row)
+   if fields:groups.setdefault(fields,[]).append(row)
   updated=0
   with self.factory.connection() as connection:
    try:
     with connection.cursor() as cursor:
-     for row in rows:
-      changes={field:row[field] for field in editable if field in row}
-      if not row.get('COSTCENTER') or not changes:continue
-      assignments=[f'{field}=%({field})s' for field in changes]
-      assignments.extend(["UPDATED_ON=CURRENT_TIMESTAMP()","UPDATED_BY='OPEX360_API'"])
-      cursor.execute(f"UPDATE {self.settings.snowflake_budget_table} SET {', '.join(assignments)} WHERE COSTCENTER=%(COSTCENTER)s",{**changes,'COSTCENTER':row['COSTCENTER']})
-      updated+=cursor.rowcount if isinstance(cursor.rowcount,int) and cursor.rowcount>=0 else 1
+     for fields,group in groups.items():
+      for start in range(0,len(group),500):
+       batch=group[start:start+500];params={};values=[]
+       for i,row in enumerate(batch):
+        params[f"cc{i}"]=str(row["COSTCENTER"]).strip();markers=[f"%(cc{i})s"]
+        for field in fields:
+         key=f"v_{field}_{i}";params[key]=row.get(field);markers.append(f"%({key})s")
+        values.append("("+",".join(markers)+")")
+       aliases=["COSTCENTER",*fields]
+       source_columns=",".join(f"column{j+1} AS {column}" for j,column in enumerate(aliases))
+       assignments=",".join(f"{column}=src.{column}" for column in fields)
+       sql=f"UPDATE {self.settings.snowflake_budget_table} target SET {assignments} FROM (SELECT {source_columns} FROM VALUES {','.join(values)}) src WHERE TRIM(TO_VARCHAR(target.COSTCENTER))=src.COSTCENTER"
+       cursor.execute(sql,params)
+       count=cursor.rowcount
+       updated+=count if isinstance(count,int) and count>=0 else len(batch)
     connection.commit()
    except Exception:
-    connection.rollback()
-    raise
+    connection.rollback();raise
   return updated
