@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     snowflake_cost_center_table: str = "COSTCENTER"
     snowflake_budget_table: str = "BUDGET_HOLDER"
 
+    snowflake_fx_rate_type: str = "Prate"
+    snowflake_fx_year: str = "FY26"
     snowflake_pool_size: int = Field(default=8, ge=1, le=32)
     snowflake_login_timeout_seconds: int = Field(default=15, ge=1, le=120)
     snowflake_network_timeout_seconds: int = Field(default=60, ge=5, le=600)

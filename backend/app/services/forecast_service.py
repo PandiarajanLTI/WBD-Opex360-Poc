@@ -1,155 +1,25 @@
 from typing import Any
-
-from app.repositories.base import ForecastRepository, DimensionKey
-
-
-MANDATORY_FIELDS = (
-    "TEMPLATE_NAME",
-    "VERSION",
-    "FSI_ACCOUNT",
-    "GEOGRAPHY",
-    "BRAND",
-    "PROFIT_CENTER",
-    "COMPANY_CODE",
-    "COST_CENTER",
-)
-
-
+from app.repositories.base import ForecastRepository
+MANDATORY_FIELDS=("TEMPLATE_NAME","VERSION","FSI_ACCOUNT","GEOGRAPHY","BRAND","PROFIT_CENTER","COMPANY_CODE","COST_CENTER")
 class ForecastService:
-
-    def __init__(self, repository: ForecastRepository):
-        self.repository = repository
-
-    def _is_new_row(self, row: dict[str, Any]) -> bool:
-        """
-        New rows require dimension validation.
-        Existing Snowflake rows skip dimension validation.
-        """
-        if str(row.get("INSERTED", "")).upper() == "Y":
-            return True
-
-        uniq_id = row.get("UNIQ_ID")
-
-        if uniq_id is None:
-            return True
-
-        try:
-            return int(uniq_id) <= 0
-        except (TypeError, ValueError):
-            return True
-
-    def validate(self, rows: list[dict[str, Any]]):
-        errors = []
-
-        seen: set[DimensionKey] = set()
-        candidates: list[DimensionKey] = []
-        new_rows_with_keys = []
-
-        for row in rows:
-
-            # -----------------------------------------
-            # EXISTING ROW
-            # -----------------------------------------
-            if not self._is_new_row(row):
-
-                # Existing record:
-                # Skip dimension validation.
-                continue
-
-            # -----------------------------------------
-            # NEW ROW
-            # -----------------------------------------
-
-            missing = [
-                field
-                for field in MANDATORY_FIELDS
-                if not row.get(field)
-            ]
-
-            if missing:
-                errors.append(
-                    {
-                        "rowId": row.get("UNIQ_ID"),
-                        "message": (
-                            "Missing required fields: "
-                            + ", ".join(missing)
-                        ),
-                    }
-                )
-                continue
-
-            key: DimensionKey = (
-                str(row.get("COMPANY_CODE") or ""),
-                str(row.get("COST_CENTER") or ""),
-                str(row.get("PROFIT_CENTER") or ""),
-            )
-
-            if key in seen:
-                errors.append(
-                    {
-                        "rowId": row.get("UNIQ_ID"),
-                        "message": (
-                            "Duplicate dimension combination "
-                            "in request"
-                        ),
-                    }
-                )
-                continue
-
-            seen.add(key)
-            candidates.append(key)
-            new_rows_with_keys.append((row, key))
-
-        # -----------------------------------------
-        # ONE Snowflake validation query
-        # only for NEW rows
-        # -----------------------------------------
-
-        if candidates:
-
-            valid_combinations = (
-                self.repository.valid_combinations(candidates)
-            )
-
-            for row, key in new_rows_with_keys:
-
-                if key not in valid_combinations:
-
-                    errors.append(
-                        {
-                            "rowId": row.get("UNIQ_ID"),
-                            "message": (
-                                "Invalid or inactive "
-                                "Company Code + Cost Center + "
-                                "Profit Center combination"
-                            ),
-                        }
-                    )
-
-        return errors
-
-    def save(
-        self,
-        template_name: str,
-        rows: list[dict[str, Any]],
-    ):
-
-        errors = self.validate(rows)
-
-        if errors:
-            return {
-                "saved": 0,
-                "errors": errors,
-                "message": "Validation failed",
-            }
-
-        saved = self.repository.save(
-            template_name,
-            rows,
-        )
-
-        return {
-            "saved": saved,
-            "errors": [],
-            "message": f"Saved {saved} row(s).",
-        }
+ def __init__(self,repository:ForecastRepository):self.repository=repository
+ def _new(self,row):
+  try:return row.get("UNIQ_ID") is None or int(row.get("UNIQ_ID"))<=0
+  except (TypeError,ValueError):return True
+ def validate(self,rows):
+  errors=[];pending=[];seen=set()
+  for row in rows:
+   if not self._new(row):continue
+   missing=[x for x in MANDATORY_FIELDS if not row.get(x)]
+   if missing:errors.append({"rowId":row.get("UNIQ_ID"),"message":"Missing required fields: "+", ".join(missing)});continue
+   key=(str(row["COMPANY_CODE"]),str(row["COST_CENTER"]),str(row["PROFIT_CENTER"]))
+   if key in seen:errors.append({"rowId":row.get("UNIQ_ID"),"message":"Duplicate dimension combination in request"});continue
+   seen.add(key);pending.append((row,key))
+  valid=self.repository.valid_combinations([k for _,k in pending]) if pending else set()
+  for row,key in pending:
+   if key not in valid:errors.append({"rowId":row.get("UNIQ_ID"),"message":"Invalid or inactive dimension combination"})
+  return errors
+ def save(self,template_name,rows):
+  errors=self.validate(rows)
+  if errors:return {"requested":len(rows),"updated":0,"inserted":0,"saved":0,"errors":errors,"message":"Validation failed"}
+  r=self.repository.save(template_name,rows);return {**r,"saved":r["updated"]+r["inserted"],"errors":[],"message":f"Updated {r['updated']} row(s); inserted {r['inserted']} row(s)."}
