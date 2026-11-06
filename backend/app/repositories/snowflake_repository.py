@@ -55,4 +55,35 @@ class SnowflakeForecastRepository:
   return {'requested':len(rows),'updated':updated,'inserted':inserted}
  def budget_query(self,request):
   rows=self._fetch(f"SELECT *,COUNT(*) OVER() __TOTAL_COUNT FROM {self.settings.snowflake_budget_table} ORDER BY COSTCENTER LIMIT %(l)s OFFSET %(o)s",{'l':request.endRow-request.startRow,'o':request.startRow});total=int(rows[0].pop('__TOTAL_COUNT')) if rows else 0;return rows,total
- def budget_save(self,rows):return 0
+ def budget_save(self,rows):
+  if not rows:return 0
+  editable=("FUNCTION","SUBFUNCTION","COE_TEAM","COE_SUB_TEAM","COE_POC","BU_POC","BUDGET_HOLDER","REGION","LOCATION","CITY","CUSTOM_1","CUSTOM_2","CUSTOM_3")
+  groups={}
+  for row in rows:
+   costcenter=row.get("COSTCENTER")
+   if costcenter is None or str(costcenter).strip()=="":continue
+   fields=tuple(c for c in editable if c in row)
+   if fields:groups.setdefault(fields,[]).append(row)
+  updated=0
+  with self.factory.connection() as connection:
+   try:
+    with connection.cursor() as cursor:
+     for fields,group in groups.items():
+      for start in range(0,len(group),500):
+       batch=group[start:start+500];params={};values=[]
+       for i,row in enumerate(batch):
+        params[f"cc{i}"]=str(row["COSTCENTER"]).strip();markers=[f"%(cc{i})s"]
+        for field in fields:
+         key=f"v_{field}_{i}";params[key]=row.get(field);markers.append(f"%({key})s")
+        values.append("("+",".join(markers)+")")
+       aliases=["COSTCENTER",*fields]
+       source_columns=",".join(f"column{j+1} AS {column}" for j,column in enumerate(aliases))
+       assignments=",".join(f"{column}=src.{column}" for column in fields)
+       sql=f"UPDATE {self.settings.snowflake_budget_table} target SET {assignments} FROM (SELECT {source_columns} FROM VALUES {','.join(values)}) src WHERE TRIM(TO_VARCHAR(target.COSTCENTER))=src.COSTCENTER"
+       cursor.execute(sql,params)
+       count=cursor.rowcount
+       updated+=count if isinstance(count,int) and count>=0 else len(batch)
+    connection.commit()
+   except Exception:
+    connection.rollback();raise
+  return updated
