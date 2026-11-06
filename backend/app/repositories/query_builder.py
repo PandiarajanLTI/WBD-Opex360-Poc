@@ -1,204 +1,89 @@
 from dataclasses import dataclass
 from typing import Any
 from app.schemas.grid import GridQuery
+
+TEMPLATE_COLUMNS=['UNIQ_ID', 'MONTH', 'ID', 'ALL_DIM_ID', 'TEMPLATE_NAME', 'VERSION', 'FSI_ACCOUNT', 'GEOGRAPHY', 'BRAND', 'PROFIT_CENTER', 'COMPANY_CODE', 'COST_CENTER', 'BU', 'TEMPLATE_PRIMARY_KEY', 'DER_VENDOR_NAME', 'DER_PURCHASE_ORDER', 'DER_INTERNAL_ORDER_ID', 'DER_PROJECT_NAME', 'PO_START_DATE', 'PO_END_DATE', 'PO_AMOUNT', 'SERVICE_DESCRIPTION', 'STATUS', 'EXPENSE_TYPE', 'COMMIT_TYPE', 'CUSTOM_FIELD1', 'CUSTOM_FIELD2', 'CUSTOM_FIELD3', 'NOTES', 'BUDGET_HOLDER', 'SECTION', 'CURRENCY', 'AGG_TYPE', 'FORECAST_DRIVER_ID', 'FSI_ACCOUNT_PLANNING', 'RECLASSIFICATION_TYPE', 'MANUAL_ENTRY', 'PRIOR_ACTUALS_FLAG', 'BRAND_NAME', 'BRAND_PATH3_NAME', 'GEOGRAPHY_NAME', 'GEOGRAPHY_PATH3_NAME', 'GEOGRAPHY_PATH4_NAME', 'GEOGRAPHY_PATH5_NAME', 'GEOGRAPHY_PATH6_NAME', 'COSTCENTER_NAME', 'COSTCENTER_PATH3_NAME', 'COSTCENTER_PATH4_NAME', 'COSTCENTER_PATH5_NAME', 'COSTCENTER_PATH6_NAME', 'COSTCENTER_PATH7_NAME', 'COMPANY_CODE_NAME', 'COMPANY_CODE_PATH4_NAME', 'COMPANY_CODE_PATH5_NAME', 'FSI_ACC_NAME', 'FSI_PATH11_NAME', 'FSI_PATH12_NAME', 'FSI_PATH13_NAME', 'FSI_PATH14_NAME', 'PROFITCENTER_PATH4_NAME', 'PROFITCENTER_PATH5_NAME', 'PROFITCENTER_PATH6_NAME', 'JAN_ACTUALS', 'JAN_FORECAST', 'FEB_ACTUALS', 'FEB_FORECAST', 'MAR_ACTUALS', 'MAR_FORECAST', 'APR_FORECAST', 'APR_ACTUALS', 'MAY_ACTUALS', 'MAY_FORECAST', 'JUN_ACTUALS', 'JUN_FORECAST', 'JUL_ACTUALS', 'JUL_FORECAST', 'AUG_ACTUALS', 'AUG_FORECAST', 'SEP_ACTUALS', 'SEP_FORECAST', 'OCT_ACTUALS', 'OCT_FORECAST', 'NOV_ACTUALS', 'NOV_FORECAST', 'DEC_ACTUALS', 'DEC_FORECAST', 'AVG_JAN_FORECAST', 'AVG_FEB_FORECAST', 'AVG_MAR_FORECAST', 'AVG_APR_FORECAST', 'AVG_MAY_FORECAST', 'AVG_JUN_FORECAST', 'AVG_JUL_FORECAST', 'AVG_AUG_FORECAST', 'AVG_SEP_FORECAST', 'AVG_OCT_FORECAST', 'AVG_NOV_FORECAST', 'AVG_DEC_FORECAST', 'DER_PO_JAN_FORECAST', 'DER_PO_FEB_FORECAST', 'DER_PO_MAR_FORECAST', 'DER_PO_APR_FORECAST', 'DER_PO_MAY_FORECAST', 'DER_PO_JUN_FORECAST', 'DER_PO_JUL_FORECAST', 'DER_PO_AUG_FORECAST', 'DER_PO_SEP_FORECAST', 'DER_PO_OCT_FORECAST', 'DER_PO_NOV_FORECAST', 'DER_PO_DEC_FORECAST', 'YTD_WORKING_FORECAST', 'YTG_WORKING_FORECAST', 'FY_WORKING_FORECAST', 'JAN_PRIORFORECAST', 'FEB_PRIORFORECAST', 'MAR_PRIORFORECAST', 'APR_PRIORFORECAST', 'MAY_PRIORFORECAST', 'JUN_PRIORFORECAST', 'JUL_PRIORFORECAST', 'AUG_PRIORFORECAST', 'SEP_PRIORFORECAST', 'OCT_PRIORFORECAST', 'NOV_PRIORFORECAST', 'DEC_PRIORFORECAST', 'FY_PRIORFORECAST', 'VARIANCE_PRIORFORECAST', 'JAN_BUDGET', 'FEB_BUDGET', 'MAR_BUDGET', 'APR_BUDGET', 'MAY_BUDGET', 'JUN_BUDGET', 'JUL_BUDGET', 'AUG_BUDGET', 'SEP_BUDGET', 'OCT_BUDGET', 'NOV_BUDGET', 'DEC_BUDGET', 'FY_BUDGET', 'VARIANCE_BUDGET', 'JAN_PRIORACTUALS', 'FEB_PRIORACTUALS', 'MAR_PRIORACTUALS', 'APR_PRIORACTUALS', 'MAY_PRIORACTUALS', 'JUN_PRIORACTUALS', 'JUL_PRIORACTUALS', 'AUG_PRIORACTUALS', 'SEP_PRIORACTUALS', 'OCT_PRIORACTUALS', 'NOV_PRIORACTUALS', 'DEC_PRIORACTUALS', 'FY_PRIORACTUALS', 'VARIANCE_PRIORACTUALS', 'COMMENT', 'LOAD_TS', 'JAN_ACTUALS_PRATE', 'FEB_ACTUALS_PRATE', 'MAR_ACTUALS_PRATE', 'APR_ACTUALS_PRATE', 'MAY_ACTUALS_PRATE', 'JUN_ACTUALS_PRATE', 'JUL_ACTUALS_PRATE', 'AUG_ACTUALS_PRATE', 'SEP_ACTUALS_PRATE', 'OCT_ACTUALS_PRATE', 'NOV_ACTUALS_PRATE', 'DEC_ACTUALS_PRATE', 'JAN_FORECAST_PRATE', 'FEB_FORECAST_PRATE', 'MAR_FORECAST_PRATE', 'APR_FORECAST_PRATE', 'MAY_FORECAST_PRATE', 'JUN_FORECAST_PRATE', 'JUL_FORECAST_PRATE', 'AUG_FORECAST_PRATE', 'SEP_FORECAST_PRATE', 'OCT_FORECAST_PRATE', 'NOV_FORECAST_PRATE', 'DEC_FORECAST_PRATE', 'AVG_JAN_FORECAST_PRATE', 'AVG_FEB_FORECAST_PRATE', 'AVG_MAR_FORECAST_PRATE', 'AVG_APR_FORECAST_PRATE', 'AVG_MAY_FORECAST_PRATE', 'AVG_JUN_FORECAST_PRATE', 'AVG_JUL_FORECAST_PRATE', 'AVG_AUG_FORECAST_PRATE', 'AVG_SEP_FORECAST_PRATE', 'AVG_OCT_FORECAST_PRATE', 'AVG_NOV_FORECAST_PRATE', 'AVG_DEC_FORECAST_PRATE', 'DER_PO_JAN_FORECAST_PRATE', 'DER_PO_FEB_FORECAST_PRATE', 'DER_PO_MAR_FORECAST_PRATE', 'DER_PO_APR_FORECAST_PRATE', 'DER_PO_MAY_FORECAST_PRATE', 'DER_PO_JUN_FORECAST_PRATE', 'DER_PO_JUL_FORECAST_PRATE', 'DER_PO_AUG_FORECAST_PRATE', 'DER_PO_SEP_FORECAST_PRATE', 'DER_PO_OCT_FORECAST_PRATE', 'DER_PO_NOV_FORECAST_PRATE', 'DER_PO_DEC_FORECAST_PRATE', 'YTD_WORKING_FORECAST_PRATE', 'YTG_WORKING_FORECAST_PRATE', 'FY_WORKING_FORECAST_PRATE', 'JAN_PRIORFORECAST_PRATE', 'FEB_PRIORFORECAST_PRATE', 'MAR_PRIORFORECAST_PRATE', 'APR_PRIORFORECAST_PRATE', 'MAY_PRIORFORECAST_PRATE', 'JUN_PRIORFORECAST_PRATE', 'JUL_PRIORFORECAST_PRATE', 'AUG_PRIORFORECAST_PRATE', 'SEP_PRIORFORECAST_PRATE', 'OCT_PRIORFORECAST_PRATE', 'NOV_PRIORFORECAST_PRATE', 'DEC_PRIORFORECAST_PRATE', 'FY_PRIORFORECAST_PRATE', 'VARIANCE_PRIORFORECAST_PRATE', 'JAN_BUDGET_PRATE', 'FEB_BUDGET_PRATE', 'MAR_BUDGET_PRATE', 'APR_BUDGET_PRATE', 'MAY_BUDGET_PRATE', 'JUN_BUDGET_PRATE', 'JUL_BUDGET_PRATE', 'AUG_BUDGET_PRATE', 'SEP_BUDGET_PRATE', 'OCT_BUDGET_PRATE', 'NOV_BUDGET_PRATE', 'DEC_BUDGET_PRATE', 'FY_BUDGET_PRATE', 'VARIANCE_BUDGET_PRATE', 'JAN_PRIORACTUALS_PRATE', 'FEB_PRIORACTUALS_PRATE', 'MAR_PRIORACTUALS_PRATE', 'APR_PRIORACTUALS_PRATE', 'MAY_PRIORACTUALS_PRATE', 'JUN_PRIORACTUALS_PRATE', 'JUL_PRIORACTUALS_PRATE', 'AUG_PRIORACTUALS_PRATE', 'SEP_PRIORACTUALS_PRATE', 'OCT_PRIORACTUALS_PRATE', 'NOV_PRIORACTUALS_PRATE', 'DEC_PRIORACTUALS_PRATE', 'FY_PRIORACTUALS_PRATE', 'VARIANCE_PRIORACTUALS_PRATE', 'DELETED', 'INSERTED', 'USER_ACTION', 'UPDATED_BY', 'UPDATED_TS', 'DUPLICATE_FLAG']
+PRATE_COLUMNS=['JAN_ACTUALS_PRATE', 'FEB_ACTUALS_PRATE', 'MAR_ACTUALS_PRATE', 'APR_ACTUALS_PRATE', 'MAY_ACTUALS_PRATE', 'JUN_ACTUALS_PRATE', 'JUL_ACTUALS_PRATE', 'AUG_ACTUALS_PRATE', 'SEP_ACTUALS_PRATE', 'OCT_ACTUALS_PRATE', 'NOV_ACTUALS_PRATE', 'DEC_ACTUALS_PRATE', 'JAN_FORECAST_PRATE', 'FEB_FORECAST_PRATE', 'MAR_FORECAST_PRATE', 'APR_FORECAST_PRATE', 'MAY_FORECAST_PRATE', 'JUN_FORECAST_PRATE', 'JUL_FORECAST_PRATE', 'AUG_FORECAST_PRATE', 'SEP_FORECAST_PRATE', 'OCT_FORECAST_PRATE', 'NOV_FORECAST_PRATE', 'DEC_FORECAST_PRATE', 'AVG_JAN_FORECAST_PRATE', 'AVG_FEB_FORECAST_PRATE', 'AVG_MAR_FORECAST_PRATE', 'AVG_APR_FORECAST_PRATE', 'AVG_MAY_FORECAST_PRATE', 'AVG_JUN_FORECAST_PRATE', 'AVG_JUL_FORECAST_PRATE', 'AVG_AUG_FORECAST_PRATE', 'AVG_SEP_FORECAST_PRATE', 'AVG_OCT_FORECAST_PRATE', 'AVG_NOV_FORECAST_PRATE', 'AVG_DEC_FORECAST_PRATE', 'DER_PO_JAN_FORECAST_PRATE', 'DER_PO_FEB_FORECAST_PRATE', 'DER_PO_MAR_FORECAST_PRATE', 'DER_PO_APR_FORECAST_PRATE', 'DER_PO_MAY_FORECAST_PRATE', 'DER_PO_JUN_FORECAST_PRATE', 'DER_PO_JUL_FORECAST_PRATE', 'DER_PO_AUG_FORECAST_PRATE', 'DER_PO_SEP_FORECAST_PRATE', 'DER_PO_OCT_FORECAST_PRATE', 'DER_PO_NOV_FORECAST_PRATE', 'DER_PO_DEC_FORECAST_PRATE', 'YTD_WORKING_FORECAST_PRATE', 'YTG_WORKING_FORECAST_PRATE', 'FY_WORKING_FORECAST_PRATE', 'JAN_PRIORFORECAST_PRATE', 'FEB_PRIORFORECAST_PRATE', 'MAR_PRIORFORECAST_PRATE', 'APR_PRIORFORECAST_PRATE', 'MAY_PRIORFORECAST_PRATE', 'JUN_PRIORFORECAST_PRATE', 'JUL_PRIORFORECAST_PRATE', 'AUG_PRIORFORECAST_PRATE', 'SEP_PRIORFORECAST_PRATE', 'OCT_PRIORFORECAST_PRATE', 'NOV_PRIORFORECAST_PRATE', 'DEC_PRIORFORECAST_PRATE', 'FY_PRIORFORECAST_PRATE', 'VARIANCE_PRIORFORECAST_PRATE', 'JAN_BUDGET_PRATE', 'FEB_BUDGET_PRATE', 'MAR_BUDGET_PRATE', 'APR_BUDGET_PRATE', 'MAY_BUDGET_PRATE', 'JUN_BUDGET_PRATE', 'JUL_BUDGET_PRATE', 'AUG_BUDGET_PRATE', 'SEP_BUDGET_PRATE', 'OCT_BUDGET_PRATE', 'NOV_BUDGET_PRATE', 'DEC_BUDGET_PRATE', 'FY_BUDGET_PRATE', 'VARIANCE_BUDGET_PRATE', 'JAN_PRIORACTUALS_PRATE', 'FEB_PRIORACTUALS_PRATE', 'MAR_PRIORACTUALS_PRATE', 'APR_PRIORACTUALS_PRATE', 'MAY_PRIORACTUALS_PRATE', 'JUN_PRIORACTUALS_PRATE', 'JUL_PRIORACTUALS_PRATE', 'AUG_PRIORACTUALS_PRATE', 'SEP_PRIORACTUALS_PRATE', 'OCT_PRIORACTUALS_PRATE', 'NOV_PRIORACTUALS_PRATE', 'DEC_PRIORACTUALS_PRATE', 'FY_PRIORACTUALS_PRATE', 'VARIANCE_PRIORACTUALS_PRATE']
+VIRTUAL_COLUMNS=['FX_RATE', 'FX_RATE_TYPE', 'FX_YEAR']
+API_COLUMNS=TEMPLATE_COLUMNS+VIRTUAL_COLUMNS
+ALLOWED_COLUMNS=set(API_COLUMNS)
+DEFAULT_COLUMNS=['UNIQ_ID', 'TEMPLATE_NAME', 'VERSION', 'GEOGRAPHY', 'CURRENCY', 'FX_RATE', 'COMPANY_CODE', 'PROFIT_CENTER', 'COST_CENTER', 'FSI_ACCOUNT', 'NOV_FORECAST', 'DEC_FORECAST', 'NOV_FORECAST_PRATE', 'DEC_FORECAST_PRATE', 'FY_WORKING_FORECAST', 'FY_WORKING_FORECAST_PRATE', 'NOTES']
+COLUMN_GROUPS={'IDENTITY_AND_DIMENSIONS': ['UNIQ_ID', 'MONTH', 'ID', 'ALL_DIM_ID', 'TEMPLATE_NAME', 'VERSION', 'FSI_ACCOUNT', 'GEOGRAPHY', 'BRAND', 'PROFIT_CENTER', 'COMPANY_CODE', 'COST_CENTER', 'BU', 'TEMPLATE_PRIMARY_KEY'], 'PO_AND_BUSINESS': ['DER_VENDOR_NAME', 'DER_PURCHASE_ORDER', 'DER_INTERNAL_ORDER_ID', 'DER_PROJECT_NAME', 'PO_START_DATE', 'PO_END_DATE', 'PO_AMOUNT', 'SERVICE_DESCRIPTION', 'STATUS', 'EXPENSE_TYPE', 'COMMIT_TYPE', 'CUSTOM_FIELD1', 'CUSTOM_FIELD2', 'CUSTOM_FIELD3', 'NOTES', 'BUDGET_HOLDER', 'SECTION', 'CURRENCY', 'AGG_TYPE', 'FORECAST_DRIVER_ID', 'FSI_ACCOUNT_PLANNING', 'RECLASSIFICATION_TYPE', 'MANUAL_ENTRY', 'PRIOR_ACTUALS_FLAG'], 'HIERARCHIES': ['BRAND_NAME', 'BRAND_PATH3_NAME', 'GEOGRAPHY_NAME', 'GEOGRAPHY_PATH3_NAME', 'GEOGRAPHY_PATH4_NAME', 'GEOGRAPHY_PATH5_NAME', 'GEOGRAPHY_PATH6_NAME', 'COSTCENTER_NAME', 'COSTCENTER_PATH3_NAME', 'COSTCENTER_PATH4_NAME', 'COSTCENTER_PATH5_NAME', 'COSTCENTER_PATH6_NAME', 'COSTCENTER_PATH7_NAME', 'COMPANY_CODE_NAME', 'COMPANY_CODE_PATH4_NAME', 'COMPANY_CODE_PATH5_NAME', 'FSI_ACC_NAME', 'FSI_PATH11_NAME', 'FSI_PATH12_NAME', 'FSI_PATH13_NAME', 'FSI_PATH14_NAME', 'PROFITCENTER_PATH4_NAME', 'PROFITCENTER_PATH5_NAME', 'PROFITCENTER_PATH6_NAME'], 'ACTUALS_AND_FORECAST': ['JAN_ACTUALS', 'JAN_FORECAST', 'FEB_ACTUALS', 'FEB_FORECAST', 'MAR_ACTUALS', 'MAR_FORECAST', 'APR_FORECAST', 'APR_ACTUALS', 'MAY_ACTUALS', 'MAY_FORECAST', 'JUN_ACTUALS', 'JUN_FORECAST', 'JUL_ACTUALS', 'JUL_FORECAST', 'AUG_ACTUALS', 'AUG_FORECAST', 'SEP_ACTUALS', 'SEP_FORECAST', 'OCT_ACTUALS', 'OCT_FORECAST', 'NOV_ACTUALS', 'NOV_FORECAST', 'DEC_ACTUALS', 'DEC_FORECAST', 'AVG_JAN_FORECAST', 'AVG_FEB_FORECAST', 'AVG_MAR_FORECAST', 'AVG_APR_FORECAST', 'AVG_MAY_FORECAST', 'AVG_JUN_FORECAST', 'AVG_JUL_FORECAST', 'AVG_AUG_FORECAST', 'AVG_SEP_FORECAST', 'AVG_OCT_FORECAST', 'AVG_NOV_FORECAST', 'AVG_DEC_FORECAST', 'DER_PO_JAN_FORECAST', 'DER_PO_FEB_FORECAST', 'DER_PO_MAR_FORECAST', 'DER_PO_APR_FORECAST', 'DER_PO_MAY_FORECAST', 'DER_PO_JUN_FORECAST', 'DER_PO_JUL_FORECAST', 'DER_PO_AUG_FORECAST', 'DER_PO_SEP_FORECAST', 'DER_PO_OCT_FORECAST', 'DER_PO_NOV_FORECAST', 'DER_PO_DEC_FORECAST', 'YTD_WORKING_FORECAST', 'YTG_WORKING_FORECAST', 'FY_WORKING_FORECAST'], 'PRIOR_FORECAST': ['JAN_PRIORFORECAST', 'FEB_PRIORFORECAST', 'MAR_PRIORFORECAST', 'APR_PRIORFORECAST', 'MAY_PRIORFORECAST', 'JUN_PRIORFORECAST', 'JUL_PRIORFORECAST', 'AUG_PRIORFORECAST', 'SEP_PRIORFORECAST', 'OCT_PRIORFORECAST', 'NOV_PRIORFORECAST', 'DEC_PRIORFORECAST', 'FY_PRIORFORECAST', 'VARIANCE_PRIORFORECAST'], 'BUDGET': ['JAN_BUDGET', 'FEB_BUDGET', 'MAR_BUDGET', 'APR_BUDGET', 'MAY_BUDGET', 'JUN_BUDGET', 'JUL_BUDGET', 'AUG_BUDGET', 'SEP_BUDGET', 'OCT_BUDGET', 'NOV_BUDGET', 'DEC_BUDGET', 'FY_BUDGET', 'VARIANCE_BUDGET'], 'PRIOR_ACTUALS': ['JAN_PRIORACTUALS', 'FEB_PRIORACTUALS', 'MAR_PRIORACTUALS', 'APR_PRIORACTUALS', 'MAY_PRIORACTUALS', 'JUN_PRIORACTUALS', 'JUL_PRIORACTUALS', 'AUG_PRIORACTUALS', 'SEP_PRIORACTUALS', 'OCT_PRIORACTUALS', 'NOV_PRIORACTUALS', 'DEC_PRIORACTUALS', 'FY_PRIORACTUALS', 'VARIANCE_PRIORACTUALS', 'COMMENT', 'LOAD_TS'], 'PRATE_CONVERTED': ['JAN_ACTUALS_PRATE', 'FEB_ACTUALS_PRATE', 'MAR_ACTUALS_PRATE', 'APR_ACTUALS_PRATE', 'MAY_ACTUALS_PRATE', 'JUN_ACTUALS_PRATE', 'JUL_ACTUALS_PRATE', 'AUG_ACTUALS_PRATE', 'SEP_ACTUALS_PRATE', 'OCT_ACTUALS_PRATE', 'NOV_ACTUALS_PRATE', 'DEC_ACTUALS_PRATE', 'JAN_FORECAST_PRATE', 'FEB_FORECAST_PRATE', 'MAR_FORECAST_PRATE', 'APR_FORECAST_PRATE', 'MAY_FORECAST_PRATE', 'JUN_FORECAST_PRATE', 'JUL_FORECAST_PRATE', 'AUG_FORECAST_PRATE', 'SEP_FORECAST_PRATE', 'OCT_FORECAST_PRATE', 'NOV_FORECAST_PRATE', 'DEC_FORECAST_PRATE', 'AVG_JAN_FORECAST_PRATE', 'AVG_FEB_FORECAST_PRATE', 'AVG_MAR_FORECAST_PRATE', 'AVG_APR_FORECAST_PRATE', 'AVG_MAY_FORECAST_PRATE', 'AVG_JUN_FORECAST_PRATE', 'AVG_JUL_FORECAST_PRATE', 'AVG_AUG_FORECAST_PRATE', 'AVG_SEP_FORECAST_PRATE', 'AVG_OCT_FORECAST_PRATE', 'AVG_NOV_FORECAST_PRATE', 'AVG_DEC_FORECAST_PRATE', 'DER_PO_JAN_FORECAST_PRATE', 'DER_PO_FEB_FORECAST_PRATE', 'DER_PO_MAR_FORECAST_PRATE', 'DER_PO_APR_FORECAST_PRATE', 'DER_PO_MAY_FORECAST_PRATE', 'DER_PO_JUN_FORECAST_PRATE', 'DER_PO_JUL_FORECAST_PRATE', 'DER_PO_AUG_FORECAST_PRATE', 'DER_PO_SEP_FORECAST_PRATE', 'DER_PO_OCT_FORECAST_PRATE', 'DER_PO_NOV_FORECAST_PRATE', 'DER_PO_DEC_FORECAST_PRATE', 'YTD_WORKING_FORECAST_PRATE', 'YTG_WORKING_FORECAST_PRATE', 'FY_WORKING_FORECAST_PRATE', 'JAN_PRIORFORECAST_PRATE', 'FEB_PRIORFORECAST_PRATE', 'MAR_PRIORFORECAST_PRATE', 'APR_PRIORFORECAST_PRATE', 'MAY_PRIORFORECAST_PRATE', 'JUN_PRIORFORECAST_PRATE', 'JUL_PRIORFORECAST_PRATE', 'AUG_PRIORFORECAST_PRATE', 'SEP_PRIORFORECAST_PRATE', 'OCT_PRIORFORECAST_PRATE', 'NOV_PRIORFORECAST_PRATE', 'DEC_PRIORFORECAST_PRATE', 'FY_PRIORFORECAST_PRATE', 'VARIANCE_PRIORFORECAST_PRATE', 'JAN_BUDGET_PRATE', 'FEB_BUDGET_PRATE', 'MAR_BUDGET_PRATE', 'APR_BUDGET_PRATE', 'MAY_BUDGET_PRATE', 'JUN_BUDGET_PRATE', 'JUL_BUDGET_PRATE', 'AUG_BUDGET_PRATE', 'SEP_BUDGET_PRATE', 'OCT_BUDGET_PRATE', 'NOV_BUDGET_PRATE', 'DEC_BUDGET_PRATE', 'FY_BUDGET_PRATE', 'VARIANCE_BUDGET_PRATE', 'JAN_PRIORACTUALS_PRATE', 'FEB_PRIORACTUALS_PRATE', 'MAR_PRIORACTUALS_PRATE', 'APR_PRIORACTUALS_PRATE', 'MAY_PRIORACTUALS_PRATE', 'JUN_PRIORACTUALS_PRATE', 'JUL_PRIORACTUALS_PRATE', 'AUG_PRIORACTUALS_PRATE', 'SEP_PRIORACTUALS_PRATE', 'OCT_PRIORACTUALS_PRATE', 'NOV_PRIORACTUALS_PRATE', 'DEC_PRIORACTUALS_PRATE', 'FY_PRIORACTUALS_PRATE', 'VARIANCE_PRIORACTUALS_PRATE', 'FX_RATE', 'FX_RATE_TYPE', 'FX_YEAR'], 'AUDIT': ['DELETED', 'INSERTED', 'USER_ACTION', 'UPDATED_BY', 'UPDATED_TS', 'DUPLICATE_FLAG']}
+
 @dataclass
 class BuiltQuery:
-    sql: str
-    params: dict[str, Any]
-ALLOWED_COLUMNS = {"UNIQ_ID","TEMPLATE_NAME","VERSION","COMPANY_CODE","PROFIT_CENTER","COST_CENTER","FSI_ACCOUNT","GEOGRAPHY","BRAND","NOTES","JAN_FORECAST","FEB_FORECAST","MAR_FORECAST","APR_FORECAST","MAY_FORECAST","JUN_FORECAST","JUL_FORECAST","AUG_FORECAST","SEP_FORECAST","OCT_FORECAST","NOV_FORECAST","DEC_FORECAST","FY_WORKING_FORECAST"}
-SELECT_COLUMNS = ", ".join(sorted(ALLOWED_COLUMNS))
+    sql:str
+    params:dict[str,Any]
 
+def sql_expression(column:str)->str:
+    if column in PRATE_COLUMNS:
+        # Stored PRATE value is converted using the row currency's configured FX rate.
+        return f"ROUND(COALESCE(t.{column},0) * COALESCE(fx.FX_RATES,1),6)"
+    if column=='FX_RATE': return 'COALESCE(fx.FX_RATES,1)'
+    if column=='FX_RATE_TYPE': return 'fx.CURREP'
+    if column=='FX_YEAR': return 'fx.YEARS'
+    return f't.{column}'
 
-def _conditions(model: dict[str, Any]) -> list[dict[str, Any]]:
-    conditions = model.get("conditions")
-    if conditions:
-        return [
-            condition
-            if condition.get("filterType")
-            else {**condition, "filterType": model.get("filterType", "text")}
-            for condition in conditions
-        ]
-    legacy = [model.get("condition1"), model.get("condition2")]
-    conditions = [condition for condition in legacy if condition] or [model]
-    return [
-        condition
-        if condition.get("filterType")
-        else {**condition, "filterType": model.get("filterType", "text")}
-        for condition in conditions
-    ]
+def select_expression(column:str)->str:
+    return f'{sql_expression(column)} AS {column}'
 
+def _conditions(model):
+    values=model.get('conditions') or [x for x in (model.get('condition1'),model.get('condition2')) if x] or [model]
+    return [x if x.get('filterType') else {**x,'filterType':model.get('filterType','text')} for x in values]
 
-def _sql_number_filter(
-    column: str, model: dict[str, Any], key: str, params: dict[str, Any]
-) -> str | None:
-    operation = model.get("type", "contains")
-    value = model.get("filter")
-    operators = {
-        "equals": "=",
-        "notEqual": "!=",
-        "lessThan": "<",
-        "lessThanOrEqual": "<=",
-        "greaterThan": ">",
-        "greaterThanOrEqual": ">=",
-    }
-    if operation == "inRange" and model.get("filterTo") is not None:
-        params[f"{key}_to"] = model["filterTo"]
-        params[key] = value
-        return f"{column} BETWEEN %({key})s AND %({key}_to)s"
-    operator = operators.get(operation)
-    if not operator:
-        return None
-    params[key] = value
-    return f"{column} {operator} %({key})s"
+def _sql_filter(column,model,key,params):
+    expr=sql_expression(column); op=model.get('type','contains')
+    if op in {'blank','notBlank'}:
+        clause=f"({expr} IS NULL OR TO_VARCHAR({expr})='')"; return f'NOT {clause}' if op=='notBlank' else clause
+    if model.get('filter') is None:return None
+    if model.get('filterType')=='number':
+        ops={'equals':'=','notEqual':'!=','lessThan':'<','lessThanOrEqual':'<=','greaterThan':'>','greaterThanOrEqual':'>='}
+        if op=='inRange' and model.get('filterTo') is not None:
+            params[key]=model['filter'];params[key+'_to']=model['filterTo'];return f'{expr} BETWEEN %({key})s AND %({key}_to)s'
+        if op not in ops:return None
+        params[key]=model['filter'];return f'{expr} {ops[op]} %({key})s'
+    ops={'equals':'=','notEqual':'!=','contains':'ILIKE','notContains':'NOT ILIKE','startsWith':'ILIKE','endsWith':'ILIKE'}
+    if op not in ops:return None
+    value=str(model['filter'])
+    if op in {'contains','notContains'}:value=f'%{value}%'
+    elif op=='startsWith':value=f'{value}%'
+    elif op=='endsWith':value=f'%{value}'
+    params[key]=value;return f'{expr} {ops[op]} %({key})s'
 
-
-def _sql_text_filter(
-    column: str, model: dict[str, Any], key: str, params: dict[str, Any]
-) -> str | None:
-    operation = model.get("type", "contains")
-    text_operators = {
-        "equals": "=",
-        "notEqual": "!=",
-        "contains": "ILIKE",
-        "notContains": "NOT ILIKE",
-        "startsWith": "ILIKE",
-        "endsWith": "ILIKE",
-    }
-    operator = text_operators.get(operation)
-    if not operator:
-        return None
-    text_value = str(model["filter"])
-    if operation in {"contains", "notContains"}:
-        text_value = f"%{text_value}%"
-    elif operation == "startsWith":
-        text_value = f"{text_value}%"
-    elif operation == "endsWith":
-        text_value = f"%{text_value}"
-    params[key] = text_value
-    if operation in {"equals", "notEqual"}:
-        comparison = "=" if operation == "equals" else "!="
-        return f"LOWER({column}) {comparison} LOWER(%({key})s)"
-    return f"{column} {operator} %({key})s"
-
-
-def _sql_filter(
-    column: str, model: dict[str, Any], key: str, params: dict[str, Any]
-) -> str | None:
-    operation = model.get("type", "contains")
-    if operation in {"blank", "notBlank"}:
-        clause = f"{column} IS NULL OR TRIM(TO_VARCHAR({column})) = ''"
-        return f"NOT ({clause})" if operation == "notBlank" else f"({clause})"
-    if model.get("filter") is None:
-        return None
-    if model.get("filterType") == "number":
-        return _sql_number_filter(column, model, key, params)
-    return _sql_text_filter(column, model, key, params)
-
-
-def build_filter_clauses(
-    filter_model: dict[str, Any], allowed_columns: set[str], params: dict[str, Any]
-) -> list[str]:
-    clauses = []
-    for column, model in filter_model.items():
-        if column not in allowed_columns or not isinstance(model, dict):
-            continue
-        conditions = []
-        for condition_index, condition in enumerate(_conditions(model)):
-            clause = _sql_filter(
-                column,
-                condition,
-                f"filter_{len(clauses)}_{condition_index}",
-                params,
-            )
-            if clause:
-                conditions.append(clause)
-        if conditions:
-            joiner = " OR " if model.get("operator") == "OR" else " AND "
-            clauses.append(f"({joiner.join(conditions)})")
+def build_filter_clauses(filter_model,allowed_columns,params):
+    clauses=[]
+    for column,model in filter_model.items():
+        if column not in allowed_columns or not isinstance(model,dict):continue
+        parts=[]
+        for i,condition in enumerate(_conditions(model)):
+            part=_sql_filter(column,condition,f'f_{len(clauses)}_{i}',params)
+            if part:parts.append(part)
+        if parts:clauses.append('('+((' OR ' if model.get('operator')=='OR' else ' AND ').join(parts))+')')
     return clauses
 
+def build_order_clause(sort_model,allowed_columns,fallback):
+    parts=[f'{x.colId} {x.sort.upper()}' + (' NULLS LAST' if x.colId=='UPDATED_TS' and x.sort=='desc' else '') for x in sort_model if x.colId in allowed_columns]
+    return ','.join(parts) if parts else fallback
 
-def build_order_clause(sort_model: list[Any], allowed_columns: set[str], fallback: str) -> str:
-    order = [
-        f"{item.colId} {item.sort.upper()}"
-        for item in sort_model
-        if item.colId in allowed_columns
-    ]
-    return ", ".join(order) if order else fallback
+def selected_columns(request):
+    selected=API_COLUMNS.copy() if request.requestedColumns is None else list(dict.fromkeys(x for x in request.requestedColumns if x in ALLOWED_COLUMNS))
+    for required in reversed(['UNIQ_ID','TEMPLATE_NAME']):
+        if required not in selected:selected.insert(0,required)
+    return selected
 
-
-def _matches_number(value: Any, model: dict[str, Any]) -> bool:
-    try:
-        actual = float(value)
-        expected = float(model["filter"])
-    except (KeyError, TypeError, ValueError):
-        return False
-    operations = {
-        "equals": lambda: actual == expected,
-        "notEqual": lambda: actual != expected,
-        "lessThan": lambda: actual < expected,
-        "lessThanOrEqual": lambda: actual <= expected,
-        "greaterThan": lambda: actual > expected,
-        "greaterThanOrEqual": lambda: actual >= expected,
-        "inRange": lambda: expected <= actual <= float(model.get("filterTo", expected)),
-    }
-    return operations.get(model.get("type"), lambda: True)()
-
-
-def _matches_text(value: Any, model: dict[str, Any]) -> bool:
-    actual = "" if value is None else str(value).casefold()
-    expected = str(model["filter"]).casefold()
-    operations = {
-        "equals": lambda: actual == expected,
-        "notEqual": lambda: actual != expected,
-        "notContains": lambda: expected not in actual,
-        "startsWith": lambda: actual.startswith(expected),
-        "endsWith": lambda: actual.endswith(expected),
-        "contains": lambda: expected in actual,
-    }
-    return operations.get(model.get("type", "contains"), lambda: True)()
-
-
-def _matches_condition(value: Any, model: dict[str, Any]) -> bool:
-    operation = model.get("type", "contains")
-    if operation in {"blank", "notBlank"}:
-        is_blank = value is None or str(value).strip() == ""
-        return is_blank if operation == "blank" else not is_blank
-    if model.get("filter") is None:
-        return True
-    if model.get("filterType") == "number":
-        return _matches_number(value, model)
-    return _matches_text(value, model)
-
-
-def matches_filter_model(
-    row: dict[str, Any], filter_model: dict[str, Any], allowed_columns: set[str]
-) -> bool:
-    for column, model in filter_model.items():
-        if column not in allowed_columns or not isinstance(model, dict):
-            continue
-        conditions = _conditions(model)
-        results = [_matches_condition(row.get(column), condition) for condition in conditions]
-        if results and not (
-            any(results) if model.get("operator") == "OR" else all(results)
-        ):
-            return False
-    return True
-
-
-def sort_rows(rows: list[dict[str, Any]], sort_model: list[Any], allowed_columns: set[str]) -> None:
-    for item in reversed(sort_model):
-        if item.colId in allowed_columns:
-            rows.sort(
-                key=lambda row, field=item.colId: (row.get(field) is None, row.get(field)),
-                reverse=item.sort == "desc",
-            )
-
-
-def build_grid_query(table: str, template_name: str, request: GridQuery) -> BuiltQuery:
-    where = ["TEMPLATE_NAME = %(template_name)s"]
-    params: dict[str, Any] = {"template_name": template_name, "limit": request.endRow - request.startRow, "offset": request.startRow}
-    where.extend(build_filter_clauses(request.filterModel, ALLOWED_COLUMNS, params))
-    order_sql = build_order_clause(request.sortModel, ALLOWED_COLUMNS, "UNIQ_ID ASC")
-    sql = f"SELECT {SELECT_COLUMNS} FROM {table} WHERE {' AND '.join(where)} ORDER BY {order_sql} LIMIT %(limit)s OFFSET %(offset)s"
-    return BuiltQuery(sql, params)
+def build_grid_query(table,currency_table,template_name,request,rate_type,rate_year):
+    selected=selected_columns(request)
+    params={'template_name':template_name,'limit':request.endRow-request.startRow,'offset':request.startRow,'rate_type':rate_type,'rate_year':rate_year}
+    where=['t.TEMPLATE_NAME=%(template_name)s',*build_filter_clauses(request.filterModel,ALLOWED_COLUMNS,params)]
+    order=build_order_clause(request.sortModel,ALLOWED_COLUMNS,'UNIQ_ID ASC')
+    select_sql=','.join(select_expression(c) for c in selected)
+    sql=f"""SELECT {select_sql},COUNT(*) OVER() AS __TOTAL_COUNT
+    FROM {table} t
+    LEFT JOIN (
+      SELECT CURRENCY,CURREP,YEARS,MAX(FX_RATES) FX_RATES
+      FROM {currency_table}
+      WHERE CURREP=%(rate_type)s AND YEARS=%(rate_year)s
+      GROUP BY CURRENCY,CURREP,YEARS
+    ) fx ON UPPER(TRIM(t.CURRENCY))=UPPER(TRIM(fx.CURRENCY))
+    WHERE {' AND '.join(where)} ORDER BY {order} LIMIT %(limit)s OFFSET %(offset)s"""
+    return BuiltQuery(sql,params)

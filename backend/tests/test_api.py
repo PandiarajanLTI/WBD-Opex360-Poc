@@ -19,6 +19,22 @@ def test_query_applies_ag_grid_filter_sort_and_pagination():
     assert [row['NOV_FORECAST'] for row in result['rows']]==sorted(
         (row['NOV_FORECAST'] for row in result['rows']),reverse=True
     )
+def test_summary_query_groups_forecast_by_fsi_and_region():
+    response=client.post('/api/templates/Warner%20Media/rows/summary',json={
+        'startRow':0,
+        'endRow':100,
+        'sortModel':[{'colId':'FSI_ACCOUNT','sort':'asc'}],
+        'filterModel':{},
+    })
+    assert response.status_code==200
+    result=response.json()
+    assert result['totalRowCount']==12
+    assert len(result['rows'])==12
+    first=result['rows'][0]
+    assert first['FSI_ACCOUNT']=='A000'
+    assert first['GEOGRAPHY'] in {'NA','EMEA'}
+    assert first['ROW_COUNT']>0
+    assert first['FY_WORKING_FORECAST']>0
 def test_save_rejects_missing_fields():
     response=client.post('/api/templates/Warner%20Media/rows/save',json={'rows':[{'UNIQ_ID':-1}]}); assert response.status_code==422
 

@@ -24,6 +24,9 @@ def metadata(template_name: str, repository=Depends(get_repository)): return rep
 @router.post("/templates/{template_name}/rows/query", response_model=GridResponse)
 def query_rows(template_name: str, request: GridQuery, repository=Depends(get_repository)):
     rows, total = repository.query(template_name, request); return GridResponse(rows=rows, totalRowCount=total)
+@router.post("/templates/{template_name}/rows/summary", response_model=GridResponse)
+def summarize_rows(template_name: str, request: GridQuery, repository=Depends(get_repository)):
+    rows, total = repository.summarize(template_name, request); return GridResponse(rows=rows,totalRowCount=total)
 @router.post("/templates/{template_name}/rows/validate")
 def validate_rows(template_name: str, payload: RowsPayload, service: ForecastService=Depends(get_forecast_service)): return {"errors":service.validate(payload.rows)}
 @router.post("/templates/{template_name}/rows/save")

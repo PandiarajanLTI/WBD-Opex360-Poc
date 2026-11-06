@@ -39,16 +39,22 @@ describe('AddForecastRowPanel', () => {
 
     await waitFor(() =>
       expect(saveRows).toHaveBeenCalledWith('Warner Media', [
-        expect.objectContaining({
+        {
           UNIQ_ID: -1,
-          INSERTED: 'Y',
           TEMPLATE_NAME: 'Warner Media',
           VERSION: '10+2',
+          FSI_ACCOUNT: 'A001',
+          GEOGRAPHY: 'NA',
+          BRAND: 'Studio',
           COMPANY_CODE: 'US01',
           COST_CENTER: 'C900',
+          PROFIT_CENTER: 'P001',
+          CURRENCY: 'USD',
+          STATUS: 'Working',
           NOV_FORECAST: 0,
           DEC_FORECAST: 0,
-        }),
+          NOTES: '',
+        },
       ]),
     );
     expect(onComplete).toHaveBeenCalledWith('Saved 1 row(s).');
