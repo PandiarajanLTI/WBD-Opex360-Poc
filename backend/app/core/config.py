@@ -9,9 +9,9 @@ class Settings(BaseSettings):
     data_repository: str = "snowflake"
     cors_origins: str = "http://localhost:5173"
 
-    snowflake_account: str = ""
-    snowflake_user: str = ""
-    snowflake_password: SecretStr = SecretStr("")
+    snowflake_account: str = "QDEFQVK-BF89605"
+    snowflake_user: str = "VISHWASWAROOP007"
+    snowflake_password: str = "Vishwaswaroop@123"
     snowflake_warehouse: str = "COMPUTE_WH"
     snowflake_database: str = "OPEX360_POC"
     snowflake_schema: str = "FORECAST"

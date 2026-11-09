@@ -23,7 +23,7 @@ class SnowflakeConnectionFactory:
             (
                 self.settings.snowflake_account,
                 self.settings.snowflake_user,
-                self.settings.snowflake_password.get_secret_value(),
+                self.settings.snowflake_password,
             )
         ):
             raise RuntimeError(
@@ -34,7 +34,7 @@ class SnowflakeConnectionFactory:
         return snowflake.connector.connect(
             account=self.settings.snowflake_account,
             user=self.settings.snowflake_user,
-            password=self.settings.snowflake_password.get_secret_value(),
+            password=self.settings.snowflake_password,
             warehouse=self.settings.snowflake_warehouse,
             database=self.settings.snowflake_database,
             schema=self.settings.snowflake_schema,

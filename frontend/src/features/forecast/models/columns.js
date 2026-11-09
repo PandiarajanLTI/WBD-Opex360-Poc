@@ -1,3 +1,24 @@
+const LOCKED_LEFT_COLUMNS = [
+  'TEMPLATE_NAME',
+  'VERSION',
+  'COMPANY_CODE',
+  'BRAND',
+  'GEOGRAPHY',
+  'COST_CENTER',
+  'PROFIT_CENTER',
+  'CURRENCY',
+  'REPORTABLE',
+  'BUSINESS_UNIT',
+  'DER_VENDOR_NAME',
+  'DER_PROJECT_NAME',
+  'DER_INTERNAL_ORDER_ID',
+  'DER_PURCHASE_ORDER',
+  'FORECAST_DRIVER_ID',
+  'AGG_TYPE',
+];
+
+const isLockedLeft = (field) => LOCKED_LEFT_COLUMNS.includes(field);
+
 export const DESCRIPTOR_COLUMNS = [
   ['TEMPLATE_NAME', 'Template'],
   ['VERSION', 'Version'],
@@ -29,8 +50,8 @@ export function createForecastColumns(apiColumns = []) {
     headerName,
     colId: field,
     pinned: field === 'TEMPLATE_NAME' ? 'left' : null,
-    lockPinned: false,
-    suppressMovable: false,
+    lockPinned: isLockedLeft(field),
+    suppressMovable: isLockedLeft(field),
     editable: ({ data }) => data?.INSERTED === 'Y' || field === 'NOTES',
     filter: 'agTextColumnFilter',
     minWidth: field === 'NOTES' ? 220 : 130,
@@ -88,7 +109,9 @@ export function createForecastColumns(apiColumns = []) {
       return {
         field,
         colId: field,
-        headerName: field.replaceAll('_', ' '),
+        headerName: field.replaceAll('_', ' '), 
+        pinned: isLockedLeft(field) ? 'left' : null,
+        suppressMovable: isLockedLeft(field),
         editable: ({ data }) => data?.INSERTED === 'Y',
         filter: isNumeric ? 'agNumberColumnFilter' : 'agTextColumnFilter',
         ...(isNumeric ? { type: 'numericColumn' } : {}),
