@@ -627,13 +627,7 @@ export default function ForecastPage() {
           </p>
         </div>
         <div className="forecast-heading-actions">
-          <button
-            className="kpi-view-button"
-            onClick={summaryToKpiView}
-            type="button"
-          >
-            Click here to check KPI&apos;s view
-          </button>
+        
           <details
             className="view-selector"
             onToggle={(event) => setIsViewMenuOpen(event.currentTarget.open)}
@@ -702,29 +696,8 @@ export default function ForecastPage() {
               </button>
             </div>
           </details>
-          <button
-            aria-expanded={isRequiredDimensionsOpen}
-            aria-label="Required dimensions"
-            className="icon-action"
-            onClick={openRequiredDimensions}
-            title="Required dimensions"
-            type="button"
-          >
-            i
-          </button>
-          <button
-            aria-label="Team collaboration"
-            className="icon-action"
-            onClick={() =>
-              setMessage(
-                'Team collaboration is not configured in this workspace.',
-              )
-            }
-            title="Team collaboration"
-            type="button"
-          >
-            ♧
-          </button>
+        
+          
           <button
             aria-label="Download forecast"
             className="icon-action"
