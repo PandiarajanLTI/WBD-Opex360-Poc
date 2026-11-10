@@ -15,13 +15,19 @@ class BuiltQuery:
     sql:str
     params:dict[str,Any]
 
-def sql_expression(column:str)->str:
+def sql_expression(column: str) -> str:
     if column in PRATE_COLUMNS:
-        # Stored PRATE value is converted using the row currency's configured FX rate.
-        return f"ROUND(COALESCE(t.{column},0) * COALESCE(fx.FX_RATES,1),6)"
-    if column=='FX_RATE': return 'COALESCE(fx.FX_RATES,1)'
-    if column=='FX_RATE_TYPE': return 'fx.CURREP'
-    if column=='FX_YEAR': return 'fx.YEARS'
+        return f't.{column}'
+
+    if column == 'FX_RATE':
+        return 'COALESCE(fx.FX_RATES,1)'
+
+    if column == 'FX_RATE_TYPE':
+        return 'fx.CURREP'
+
+    if column == 'FX_YEAR':
+        return 'fx.YEARS'
+
     return f't.{column}'
 
 def select_expression(column:str)->str:
