@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { AgGridReact } from 'ag-grid-react';
+import ForecastGrid from '../components/ForecastGrid';
 import AddForecastRowPanel from '../components/AddForecastRowPanel';
 import BulkUpdatePanel from '../components/BulkUpdatePanel';
 import CreateForecastViewPanel from '../components/CreateForecastViewPanel';
@@ -12,6 +12,7 @@ import {
   limitPinnedDescriptorColumns,
   loadColumnState,
   normalizeMovedColumnState,
+  orderDescriptorColumnsFirst,
   saveColumnState,
 } from '../utils/columnState';
 import {
@@ -300,7 +301,9 @@ export default function ForecastPage() {
       gridRef.current = { api };
       const saved = loadColumnState(decodedName);
       if (saved) {
-        const state = limitPinnedDescriptorColumns(saved).map((column) =>
+        const state = limitPinnedDescriptorColumns(
+          orderDescriptorColumnsFirst(saved, columnDefs),
+        ).map((column) =>
           column.colId === 'BRAND' ? { ...column, hide: false } : column,
         );
         api.applyColumnState({ state, applyOrder: true });
@@ -872,7 +875,9 @@ export default function ForecastPage() {
             </div>
           </div>
           <div className="ag-theme-quartz grid" onPaste={handlePaste}>
-            <AgGridReact
+            <ForecastGrid
+              key={activeLayoutView === 'summary' ? 'summary' : 'detail'}
+              dimensionScroll={activeLayoutView !== 'summary'}
               theme="legacy"
               columnDefs={
                 activeLayoutView === 'summary'
@@ -908,10 +913,11 @@ export default function ForecastPage() {
                       selectAll: 'currentPage',
                     }
               }
-              selectionColumnDef={{ headerComponent: SelectAllRowsHeader }}
+              selectionColumnDef={{ headerComponent: SelectAllRowsHeader, pinned: 'left', lockPinned: true }}
               readOnlyEdit={activeLayoutView === 'summary'}
               stopEditingWhenCellsLoseFocus
               suppressDragLeaveHidesColumns
+              alwaysShowHorizontalScroll
               onGridReady={handleGridReady}
               onCellValueChanged={
                 activeLayoutView === 'summary'

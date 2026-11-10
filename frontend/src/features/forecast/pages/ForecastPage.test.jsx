@@ -19,7 +19,7 @@ const { grid, getMetadata, queryRows, querySummaryRows, saveRows } = vi.hoisted(
   saveRows: vi.fn(),
 }));
 
-vi.mock('ag-grid-react', () => ({ AgGridReact: grid }));
+vi.mock('../components/ForecastGrid', () => ({ default: grid }));
 vi.mock('../hooks/useForecastGrid', () => ({
   useForecastGrid: () => ({
     rows: [],
@@ -57,6 +57,36 @@ async function renderPage() {
 }
 
 describe('forecast column visibility', () => {
+  it('keeps metadata descriptors scrollable with a visible horizontal scrollbar', async () => {
+    getMetadata.mockResolvedValueOnce({
+      columns: ['TEMPLATE_NAME', 'DER_PROJECT_NAME', 'CURRENCY', 'AGG_TYPE'],
+      kpis: {},
+    });
+
+    const props = await renderPage();
+
+    expect(props.alwaysShowHorizontalScroll).toBe(true);
+    expect(props.columnDefs.slice(0, 17).map((column) => column.colId)).toEqual([
+      'TEMPLATE_NAME', 'VERSION', 'COMPANY_CODE', 'BRAND', 'GEOGRAPHY',
+      'COST_CENTER', 'PROFIT_CENTER', 'CURRENCY', 'REPORTABLE', 'BUSINESS_UNIT',
+      'DER_VENDOR_NAME', 'DER_PROJECT_NAME', 'DER_INTERNAL_ORDER_ID',
+      'DER_PURCHASE_ORDER', 'FORECAST_DRIVER_ID', 'AGG_TYPE', 'FSI_ACCOUNT',
+    ]);
+    expect(
+      props.columnDefs.filter((column) => column.pinned === 'left').map(
+        (column) => column.colId,
+      ),
+    ).toEqual(props.columnDefs.slice(0, 17).map((column) => column.colId));
+    for (const field of ['DER_PROJECT_NAME', 'CURRENCY', 'AGG_TYPE']) {
+      expect(props.columnDefs.find((column) => column.colId === field)).toEqual(
+        expect.objectContaining({ pinned: 'left', lockPinned: true }),
+      );
+      expect(props.columnDefs.findIndex((column) => column.colId === field)).toBeLessThan(
+        props.columnDefs.findIndex((column) => column.colId === 'JAN_FORECAST'),
+      );
+    }
+  });
+
   it('renders every column named in forecast metadata', async () => {
     getMetadata.mockResolvedValueOnce({
       columns: [
@@ -85,7 +115,7 @@ describe('forecast column visibility', () => {
     );
   });
 
-  it('restores a saved hidden Brand without resetting the rest of the layout', async () => {
+  it('restores required descriptors in order without losing saved widths', async () => {
     const saved = [
       { colId: 'TEMPLATE_NAME', pinned: 'left', width: 150, hide: false },
       { colId: 'NOTES', pinned: 'left', width: 240, hide: false },
@@ -94,11 +124,14 @@ describe('forecast column visibility', () => {
     ];
     localStorage.setItem('opex360:grid:Warner Media', JSON.stringify(saved));
     const props = await renderPage();
-    const restored = saved.map((column) => ({
-      ...column,
-      pinned: column.colId === 'TEMPLATE_NAME' ? 'left' : null,
-      ...(column.colId === 'BRAND' ? { hide: false } : {}),
-    }));
+    const restored = props.columnDefs
+      .filter((column) => column.context?.columnType === 'descriptor')
+      .map((column) => ({
+        ...saved.find((entry) => entry.colId === column.colId),
+        colId: column.colId,
+        ...(column.lockPinned ? { hide: false } : {}),
+        pinned: column.lockPinned ? 'left' : null,
+      }));
     const api = {
       applyColumnState: vi.fn(),
       getColumnState: vi.fn(() => restored),
@@ -140,14 +173,14 @@ describe('forecast column visibility', () => {
       props.columnDefs.find((column) => column.colId === 'NOV_FORECAST').filter,
     ).toBe('agNumberColumnFilter');
     expect(props.columnDefs.find((column) => column.colId === 'BRAND')).toEqual(
-      expect.objectContaining({ suppressMovable: false }),
+      expect.objectContaining({ suppressMovable: true }),
     );
     expect(
       props.columnDefs.filter((column) => column.pinned === 'left'),
-    ).toHaveLength(1);
+    ).toHaveLength(17);
     expect(
       props.columnDefs.find((column) => column.colId === 'COMPANY_CODE').pinned,
-    ).toBe(null);
+    ).toBe('left');
   });
 
   it('persists field visibility changes in the saved grid layout', async () => {
