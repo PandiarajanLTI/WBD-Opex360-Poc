@@ -191,6 +191,50 @@ main {
 .grid .ag-header-cell-label {
   font-weight: 600;
 }
+.forecast-unified-grid {
+  min-width: 0;
+  height: 100%;
+}
+.forecast-dimension-scroll {
+  --forecast-left-width: 45%;
+}
+/* AG Grid sets all three sizes inline to the sum of pinned column widths.
+   Override only those sizes to keep one grid with a bounded left viewport. */
+.forecast-dimension-scroll :is(
+  .ag-pinned-left-header,
+  .ag-pinned-left-cols-container,
+  .ag-pinned-left-floating-top,
+  .ag-pinned-left-floating-bottom,
+  .ag-pinned-left-sticky-top,
+  .ag-pinned-left-sticky-bottom,
+  .ag-horizontal-left-spacer
+) {
+  width: var(--forecast-left-width) !important;
+  min-width: var(--forecast-left-width) !important;
+  max-width: var(--forecast-left-width) !important;
+  flex-shrink: 0;
+}
+.forecast-dimension-scroll :is(
+  .ag-pinned-left-header,
+  .ag-pinned-left-cols-container,
+  .ag-pinned-left-floating-top,
+  .ag-pinned-left-floating-bottom,
+  .ag-pinned-left-sticky-top,
+  .ag-pinned-left-sticky-bottom
+) {
+  overflow-x: hidden;
+}
+.forecast-dimension-scroll .ag-horizontal-left-spacer {
+  overflow-x: scroll;
+  overflow-y: hidden;
+}
+.forecast-dimension-scroll .ag-horizontal-left-spacer:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+.forecast-dimension-scroll-track {
+  height: 1px;
+}
 .grid .ag-cell-label-container {
   flex-direction: row;
   justify-content: flex-start;

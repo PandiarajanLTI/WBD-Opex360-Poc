@@ -1,4 +1,4 @@
-const LOCKED_LEFT_COLUMNS = [
+const LOCKED_LEFT_COLUMNS = new Set([
   'TEMPLATE_NAME',
   'VERSION',
   'COMPANY_CODE',
@@ -15,19 +15,29 @@ const LOCKED_LEFT_COLUMNS = [
   'DER_PURCHASE_ORDER',
   'FORECAST_DRIVER_ID',
   'AGG_TYPE',
-];
+  'FSI_ACCOUNT',
+]);
 
-const isLockedLeft = (field) => LOCKED_LEFT_COLUMNS.includes(field);
+export const isLockedLeft = (field) => LOCKED_LEFT_COLUMNS.has(field);
 
 export const DESCRIPTOR_COLUMNS = [
   ['TEMPLATE_NAME', 'Template'],
   ['VERSION', 'Version'],
   ['COMPANY_CODE', 'Company Code'],
-  ['PROFIT_CENTER', 'Profit Center'],
-  ['COST_CENTER', 'Cost Center'],
-  ['FSI_ACCOUNT', 'FSI Account'],
-  ['GEOGRAPHY', 'Geography'],
   ['BRAND', 'Brand'],
+  ['GEOGRAPHY', 'Geography'],
+  ['COST_CENTER', 'Cost Center'],
+  ['PROFIT_CENTER', 'Profit Center'],
+  ['CURRENCY', 'Currency'],
+  ['REPORTABLE', 'Reportable'],
+  ['BUSINESS_UNIT', 'Business Unit'],
+  ['DER_VENDOR_NAME', 'DER Vendor Name'],
+  ['DER_PROJECT_NAME', 'DER Project Name'],
+  ['DER_INTERNAL_ORDER_ID', 'DER Internal Order ID'],
+  ['DER_PURCHASE_ORDER', 'DER Purchase Order'],
+  ['FORECAST_DRIVER_ID', 'Forecast Driver ID'],
+  ['AGG_TYPE', 'AGG Type'],
+  ['FSI_ACCOUNT', 'FSI Account'],
   ['NOTES', 'Notes'],
 ];
 export const MONTH_COLUMNS = [
@@ -49,7 +59,7 @@ export function createForecastColumns(apiColumns = []) {
     field,
     headerName,
     colId: field,
-    pinned: field === 'TEMPLATE_NAME' ? 'left' : null,
+    pinned: isLockedLeft(field) ? 'left' : null,
     lockPinned: isLockedLeft(field),
     suppressMovable: isLockedLeft(field),
     editable: ({ data }) => data?.INSERTED === 'Y' || field === 'NOTES',
@@ -110,7 +120,9 @@ export function createForecastColumns(apiColumns = []) {
         field,
         colId: field,
         headerName: field.replaceAll('_', ' '), 
-        pinned: isLockedLeft(field) ? 'left' : null,
+        // Keep metadata descriptors in the horizontally scrollable viewport.
+        pinned: null,
+        lockPinned: isLockedLeft(field),
         suppressMovable: isLockedLeft(field),
         editable: ({ data }) => data?.INSERTED === 'Y',
         filter: isNumeric ? 'agNumberColumnFilter' : 'agTextColumnFilter',
@@ -120,8 +132,13 @@ export function createForecastColumns(apiColumns = []) {
           'recently-edited-cell': ({ data }) =>
             data?.__editedFields?.includes(field) ?? false,
         },
-        context: { columnType: 'api' },
+        context: { columnType: isLockedLeft(field) ? 'descriptor' : 'api' },
       };
     });
-  return [...columns, ...additionalColumns];
+  return [
+    ...descriptor,
+    ...additionalColumns.filter((column) => isLockedLeft(column.field)),
+    ...columns.slice(descriptor.length),
+    ...additionalColumns.filter((column) => !isLockedLeft(column.field)),
+  ];
 }
