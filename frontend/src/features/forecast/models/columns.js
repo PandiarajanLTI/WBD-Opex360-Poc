@@ -54,7 +54,7 @@ export const MONTH_COLUMNS = [
   'NOV',
   'DEC',
 ];
-export function createForecastColumns(apiColumns = []) {
+export function createForecastColumns(apiColumns = [], novFormula = null) {
   const descriptor = DESCRIPTOR_COLUMNS.map(([field, headerName]) => ({
     field,
     headerName,
@@ -76,18 +76,28 @@ export function createForecastColumns(apiColumns = []) {
     headerName: month,
     colId: `${month}_FORECAST`,
     editable: ({ data }) =>
-      data?.INSERTED === 'Y' || ['NOV', 'DEC'].includes(month),
-    filter: 'agNumberColumnFilter',
+      !(month === 'NOV' && novFormula) &&
+      (data?.INSERTED === 'Y' || ['NOV', 'DEC'].includes(month)),
+    filter: month === 'NOV' && novFormula ? false : 'agNumberColumnFilter',
+    ...(month === 'NOV' && novFormula
+      ? {
+          headerName: 'NOV ƒx',
+          headerTooltip: 'Calculated NOV; select Save to persist the values',
+          sortable: false,
+          valueGetter: ({ data }) => (data ? novFormula(data) : null),
+        }
+      : {}),
     type: 'numericColumn',
     valueParser: ({ newValue }) => (newValue === '' ? null : Number(newValue)),
     cellClassRules: {
       'editable-cell': ({ data }) =>
-        data?.INSERTED === 'Y' || ['NOV', 'DEC'].includes(month),
+        !(month === 'NOV' && novFormula) &&
+        (data?.INSERTED === 'Y' || ['NOV', 'DEC'].includes(month)),
       'recently-edited-cell': ({ data }) =>
         data?.__editedFields?.includes(`${month}_FORECAST`) ?? false,
     },
     minWidth: 110,
-    context: { columnType: 'month', monthOrder: MONTH_COLUMNS.indexOf(month) },
+    context: { columnType: 'month', monthOrder: MONTH_COLUMNS.indexOf(month), calculated: month === 'NOV' && Boolean(novFormula) },
   }));
   const columns = [
     ...descriptor,

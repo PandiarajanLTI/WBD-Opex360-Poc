@@ -5,7 +5,10 @@ import AddForecastRowPanel from '../components/AddForecastRowPanel';
 import BulkUpdatePanel from '../components/BulkUpdatePanel';
 import CreateForecastViewPanel from '../components/CreateForecastViewPanel';
 import RequiredDimensionsDialog from '../components/RequiredDimensionsDialog';
+import NovFormulaDialog from '../components/NovFormulaDialog';
 import { createForecastColumns, MONTH_COLUMNS } from '../models/columns';
+import { compileForecastFormula } from '../utils/formula';
+import { buildNovFormulaPayload, calculateDirtyNovRows } from '../utils/saveNovFormula';
 import SelectAllRowsHeader from '../../shared/SelectAllRowsHeader';
 import { forecastService } from '../services/forecastService';
 import {
@@ -26,6 +29,24 @@ const CACHE_BLOCK_SIZE = PAGE_SIZE;
 const BULK_PAGE_SIZE = 500;
 const BULK_SAVE_BATCH_SIZE = 500;
 const BULK_CONCURRENCY = 3;
+const BULK_FIELDS_WITHOUT_NOV = [
+  { field: 'DEC_FORECAST', label: 'December Forecast', type: 'number' },
+  { field: 'NOTES', label: 'Notes', type: 'text' },
+];
+function readNovFormula(template) {
+  try {
+    return localStorage.getItem(`opex360:nov-formula:${template}`) ?? '';
+  } catch {
+    return '';
+  }
+}
+function readFormulaPending(template) {
+  try {
+    return Boolean(readNovFormula(template)) && localStorage.getItem(`opex360:nov-formula-pending:${template}`) !== '0';
+  } catch {
+    return Boolean(readNovFormula(template));
+  }
+}
 const SUMMARY_COLUMN_DEFS = [
   {
     field: 'FSI_ACCOUNT',
@@ -87,9 +108,30 @@ export default function ForecastPage() {
   const [isExporting, setIsExporting] = useState(false);
   const [selectedCount, setSelectedCount] = useState(0);
   const [isBulkUpdateOpen, setIsBulkUpdateOpen] = useState(false);
+  const [isFormulaOpen, setIsFormulaOpen] = useState(false);
+  const [savedFormula, setSavedFormula] = useState(() => ({
+    template: decodedName,
+    value: readNovFormula(decodedName),
+    pending: readFormulaPending(decodedName),
+  }));
+  const formula = savedFormula.template === decodedName ? savedFormula.value : '';
+  const formulaPending = savedFormula.template === decodedName && savedFormula.pending;
+  const baseColumns = useMemo(() => createForecastColumns(metadata?.columns), [metadata?.columns]);
+  const formulaFields = useMemo(
+    () => baseColumns.filter((column) => column.type === 'numericColumn').map((column) => column.field),
+    [baseColumns],
+  );
+  const compiledFormula = useMemo(() => {
+    if (!formula) return null;
+    try {
+      return compileForecastFormula(formula, formulaFields);
+    } catch {
+      return null;
+    }
+  }, [formula, formulaFields]);
   const columnDefs = useMemo(
-    () => createForecastColumns(metadata?.columns),
-    [metadata?.columns],
+    () => createForecastColumns(metadata?.columns, compiledFormula),
+    [metadata?.columns, compiledFormula],
   );
   const [visibleColumnIds, setVisibleColumnIds] = useState(() =>
     columnDefs.filter((column) => !column.hide).map((column) => column.colId),
@@ -136,6 +178,7 @@ export default function ForecastPage() {
     setIsAddRowOpen(false);
     setRowDialogSeed(null);
     setIsBulkUpdateOpen(false);
+    setIsFormulaOpen(false);
     setIsCreateViewOpen(false);
     setIsRequiredDimensionsOpen(false);
     setIsViewMenuOpen(false);
@@ -236,6 +279,20 @@ export default function ForecastPage() {
     [decodedName],
   );
   useEffect(() => {
+    setSavedFormula({ template: decodedName, value: readNovFormula(decodedName), pending: readFormulaPending(decodedName) });
+  }, [decodedName]);
+  useEffect(() => {
+    if (!compiledFormula) return;
+    const api = gridRef.current?.api;
+    api?.applyColumnState?.({ state: [{ colId: 'NOV_FORECAST', sort: null, sortIndex: null }] });
+    const filters = api?.getFilterModel?.();
+    if (filters && 'NOV_FORECAST' in filters) {
+      const remaining = { ...filters };
+      delete remaining.NOV_FORECAST;
+      api.setFilterModel(remaining);
+    }
+  }, [compiledFormula]);
+  useEffect(() => {
     const controller = new AbortController();
     forecastService
       .getMetadata(decodedName, controller.signal)
@@ -306,9 +363,11 @@ export default function ForecastPage() {
       if (saved) {
         const state = limitPinnedDescriptorColumns(
           orderDescriptorColumnsFirst(saved, columnDefs),
-        ).map((column) =>
-          column.colId === 'BRAND' ? { ...column, hide: false } : column,
-        );
+        ).map((column) => ({
+          ...column,
+          ...(column.colId === 'BRAND' ? { hide: false } : {}),
+          ...(column.colId === 'NOV_FORECAST' && compiledFormula ? { sort: null, sortIndex: null } : {}),
+        }));
         api.applyColumnState({ state, applyOrder: true });
         saveColumnState(decodedName, api.getColumnState());
       }
@@ -321,8 +380,31 @@ export default function ForecastPage() {
           .map((column) => column.colId),
       );
     },
-    [columnDefs, decodedName],
+    [columnDefs, compiledFormula, decodedName],
   );
+  const applyNovFormula = (nextFormula) => {
+    try {
+      if (nextFormula) localStorage.setItem(`opex360:nov-formula:${decodedName}`, nextFormula);
+      else localStorage.removeItem(`opex360:nov-formula:${decodedName}`);
+      if (nextFormula) localStorage.setItem(`opex360:nov-formula-pending:${decodedName}`, '1');
+      else localStorage.removeItem(`opex360:nov-formula-pending:${decodedName}`);
+    } catch (error) {
+      setMessage(`Unable to save the NOV formula in this browser: ${error.message}`);
+      return;
+    }
+    if (nextFormula) {
+      const api = gridRef.current?.api;
+      api?.applyColumnState?.({ state: [{ colId: 'NOV_FORECAST', sort: null, sortIndex: null }] });
+      const filters = api?.getFilterModel?.();
+      if (filters && 'NOV_FORECAST' in filters) {
+        const remaining = { ...filters };
+        delete remaining.NOV_FORECAST;
+        api.setFilterModel(remaining);
+      }
+    }
+    setSavedFormula({ template: decodedName, value: nextFormula, pending: Boolean(nextFormula) });
+    setIsFormulaOpen(false);
+  };
   const handleColumnVisible = useCallback(
     ({ api }) => {
       const state = api.getColumnState();
@@ -487,9 +569,15 @@ export default function ForecastPage() {
     [closeTransientUi, decodedName, isSaving, totalRowCount],
   );
   const save = async () => {
-    if (!dirtyRows.length || isSaving) return;
+    gridRef.current?.api.stopEditing?.();
+    const rowsToSave = [...dirtyRowsRef.current.values()];
+    if (!rowsToSave.length || isSaving) return;
+    if (formula && !compiledFormula) {
+      setMessage('The NOV formula is invalid or references unavailable fields. Edit or remove it before saving.');
+      return;
+    }
     if (
-      dirtyRows.some(
+      rowsToSave.some(
         (row) =>
           row.INSERTED === 'Y' &&
           Number(row.NOV_FORECAST ?? 0) === 0 &&
@@ -502,17 +590,43 @@ export default function ForecastPage() {
       return;
     setIsSaving(true);
     try {
-      const savePayload = dirtyRows.map(
-        ({ __editedFields, __editedAt, __recentlyUpdated, ...row }) => row,
-      );
-      const result = await forecastService.saveRows(decodedName, savePayload);
-      dirtyRows.forEach((row) => {
+      let savePayload;
+      if (formulaPending && compiledFormula) {
+        savePayload = await buildNovFormulaPayload({
+          templateName: decodedName,
+          calculate: compiledFormula,
+          dirtyRows: rowsToSave,
+          queryRows: forecastService.queryRows,
+          onProgress: (loaded, total) => setMessage(`Calculating NOV for ${loaded.toLocaleString()} of ${total.toLocaleString()} records…`),
+        });
+      } else if (compiledFormula) {
+        savePayload = calculateDirtyNovRows(rowsToSave, compiledFormula);
+      } else {
+        savePayload = rowsToSave.map(({ __editedFields, __editedAt, __recentlyUpdated, ...row }) => row);
+      }
+      const result = savePayload.length
+        ? await forecastService.saveRows(decodedName, savePayload)
+        : { message: 'No forecast rows to update.' };
+      if (result.errors?.length) throw new Error(result.errors.map((error) => error.message).join('; '));
+      if (typeof result.saved === 'number' && result.saved !== savePayload.length) {
+        throw new Error(`The server saved ${result.saved} of ${savePayload.length} requested rows. Some changes may already be committed; review the template before retrying.`);
+      }
+      rowsToSave.forEach((row) => {
         recentEditsRef.current.set(row.UNIQ_ID, {
-          fields: row.__editedFields ?? [],
+          fields: [...new Set([...(row.__editedFields ?? []), ...(compiledFormula ? ['NOV_FORECAST'] : [])])],
           updatedAt: Date.now(),
         });
       });
-      setMessage(result.message);
+      let saveMessage = result.message;
+      if (formulaPending) {
+        try {
+          localStorage.setItem(`opex360:nov-formula-pending:${decodedName}`, '0');
+        } catch {
+          saveMessage += ' The browser could not remember that the formula was saved.';
+        }
+        setSavedFormula((current) => current.template === decodedName ? { ...current, pending: false } : current);
+      }
+      setMessage(saveMessage);
       dirtyRowsRef.current = new Map();
       setDirtyMap(new Map());
       closeTransientUi();
@@ -609,6 +723,9 @@ export default function ForecastPage() {
   const priorForecast = Number(
     kpis.find(([label]) => label.toLowerCase().includes('prior'))?.[1] ?? 0,
   );
+  let formulaStatus = 'Calculated values were saved. Reapply and save the formula to update newly added rows.';
+  if (dirtyRows.length) formulaStatus = 'Save pending row edits to update their calculated NOV values.';
+  if (formulaPending) formulaStatus = 'Formula changes alone do not enable Save. Saving an edited row will also update NOV for every row in this template, including filtered and unloaded rows.';
   return (
     <div
       className="forecast-dashboard forecast-detail-dashboard"
@@ -631,7 +748,11 @@ export default function ForecastPage() {
           selectedCount={totalRowCount}
           onApply={applyBulkUpdate}
           onClose={() => setIsBulkUpdateOpen(false)}
+          {...(compiledFormula ? { fields: BULK_FIELDS_WITHOUT_NOV } : {})}
         />
+      )}
+      {isFormulaOpen && (
+        <NovFormulaDialog formula={formula} fields={formulaFields} onApply={applyNovFormula} onClose={() => setIsFormulaOpen(false)} />
       )}
       {isCreateViewOpen && (
         <CreateForecastViewPanel
@@ -762,7 +883,7 @@ export default function ForecastPage() {
           </button>
           <button
             className="primary"
-            disabled={!dirtyRows.length || isSaving}
+            disabled={!dirtyRows.length || isSaving || Boolean(formula && !compiledFormula)}
             onClick={save}
             type="button"
           >
@@ -864,6 +985,12 @@ export default function ForecastPage() {
                     </div>
                   </details>
                   <button
+                    onClick={() => setIsFormulaOpen(true)}
+                    type="button"
+                  >
+                    {formula ? 'Edit NOV formula' : 'Set NOV formula'}
+                  </button>
+                  <button
                     className="insert-row-button"
                     onClick={() => setIsAddRowOpen(true)}
                     type="button"
@@ -881,7 +1008,8 @@ export default function ForecastPage() {
                         Duplicate selected row
                       </button>
                       <button
-                        disabled={!totalRowCount || isSaving}
+                        disabled={!totalRowCount || isSaving || dirtyRows.length > 0}
+                        title={dirtyRows.length > 0 ? 'Save pending changes before a bulk update' : undefined}
                         onClick={() => setIsBulkUpdateOpen(true)}
                         type="button"
                       >
@@ -899,6 +1027,13 @@ export default function ForecastPage() {
               </details>
             </div>
           </div>
+          {activeLayoutView !== 'summary' && formula && (
+            <output className="nov-formula-notice">
+              {compiledFormula
+                ? `NOV formula: ${formula}. ${formulaStatus} Sorting and filtering NOV are unavailable. The formula itself is stored only in this browser.`
+                : 'The saved NOV formula is invalid or references unavailable fields. Edit or remove it to restore the calculated preview.'}
+            </output>
+          )}
           <div className="ag-theme-quartz grid" onPaste={handlePaste}>
             <ForecastGrid
               key={activeLayoutView === 'summary' ? 'summary' : 'detail'}

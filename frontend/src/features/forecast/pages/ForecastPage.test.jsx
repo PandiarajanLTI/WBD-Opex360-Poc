@@ -57,6 +57,139 @@ async function renderPage() {
 }
 
 describe('forecast column visibility', () => {
+  it('applies and removes a calculated NOV formula', async () => {
+    const props = await renderPage();
+    const api = {
+      applyColumnState: vi.fn(),
+      getFilterModel: vi.fn(() => ({ NOV_FORECAST: { filter: 5 }, BRAND: { filter: 'A' } })),
+      setFilterModel: vi.fn(),
+    };
+    act(() => props.onGridReady({ api }));
+    fireEvent.click(screen.getByRole('button', { name: 'Set NOV formula' }));
+    fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'OCT_FORECAST * 2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply formula' }));
+
+    const column = grid.mock.lastCall[0].columnDefs.find(({ field }) => field === 'NOV_FORECAST');
+    const row = { NOV_FORECAST: 99, OCT_FORECAST: 12 };
+    expect(column.valueGetter({ data: row })).toBe(24);
+    row.OCT_FORECAST = 15;
+    expect(column.valueGetter({ data: row })).toBe(30);
+    expect(row.NOV_FORECAST).toBe(99);
+    expect(column.editable({ data: row })).toBe(false);
+    expect(column.sortable).toBe(false);
+    expect(column.filter).toBe(false);
+    expect(api.setFilterModel).toHaveBeenCalledWith({ BRAND: { filter: 'A' } });
+    expect(localStorage.getItem('opex360:nov-formula:Warner Media')).toBe('OCT_FORECAST * 2');
+    expect(screen.getByRole('status').textContent).toContain('Formula changes alone do not enable Save');
+    expect(screen.getByRole('button', { name: 'Save' }).disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit NOV formula' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove formula' }));
+    expect(localStorage.getItem('opex360:nov-formula:Warner Media')).toBeNull();
+    expect(grid.mock.lastCall[0].columnDefs.find(({ field }) => field === 'NOV_FORECAST').filter).toBe('agNumberColumnFilter');
+  });
+
+  it('restores a formula and rejects invalid expressions without replacing it', async () => {
+    localStorage.setItem('opex360:nov-formula:Warner Media', 'DEC_FORECAST + 5');
+    const props = await renderPage();
+    expect(props.columnDefs.find(({ field }) => field === 'NOV_FORECAST').valueGetter({ data: { DEC_FORECAST: 4 } })).toBe(9);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit NOV formula' }));
+    fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'NOV_FORECAST + 1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply formula' }));
+    expect(screen.getByRole('alert').textContent).toContain('NOV_FORECAST');
+    expect(localStorage.getItem('opex360:nov-formula:Warner Media')).toBe('DEC_FORECAST + 5');
+  });
+
+  it('saves calculated NOV for all template pages and merges pending edits', async () => {
+    const props = await renderPage();
+    const api = { purgeInfiniteCache: vi.fn(), applyColumnState: vi.fn(), deselectAll: vi.fn() };
+    act(() => props.onGridReady({ api }));
+    fireEvent.click(screen.getByRole('button', { name: 'Set NOV formula' }));
+    fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'OCT_FORECAST + DEC_FORECAST' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply formula' }));
+    act(() => props.onCellValueChanged({
+      data: { UNIQ_ID: 1, OCT_FORECAST: 10, DEC_FORECAST: 8, NOTES: 'edited', CURRENCY: 'USD' },
+      colDef: { field: 'DEC_FORECAST' },
+    }));
+    queryRows.mockImplementation(async (_name, request) => ({
+      totalRowCount: 501,
+      rows: Array.from({ length: request.startRow === 0 ? 500 : 1 }, (_, index) => ({
+        UNIQ_ID: request.startRow + index + 1, OCT_FORECAST: 10, DEC_FORECAST: 2, CURRENCY: 'USD',
+      })),
+    }));
+    saveRows.mockResolvedValueOnce({ saved: 501, message: 'Updated 501 row(s).' });
+
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save (1)' })));
+
+    expect(queryRows).toHaveBeenCalledTimes(2);
+    expect(queryRows.mock.calls[0][1]).toEqual({ startRow: 0, endRow: 500, sortModel: [{ colId: 'UNIQ_ID', sort: 'asc' }], filterModel: {} });
+    expect(queryRows.mock.calls[1][1].startRow).toBe(500);
+    expect(saveRows).toHaveBeenCalledOnce();
+    const [name, rows] = saveRows.mock.calls[0];
+    expect(name).toBe('Warner Media');
+    expect(rows).toHaveLength(501);
+    expect(rows[0]).toMatchObject({ UNIQ_ID: 1, NOV_FORECAST: 18, DEC_FORECAST: 8, NOTES: 'edited' });
+    expect(rows[0].__editedFields).toBeUndefined();
+    expect(rows[500]).toEqual({ UNIQ_ID: 501, CURRENCY: 'USD', NOV_FORECAST: 12 });
+    expect(api.purgeInfiniteCache).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: 'Save' }).disabled).toBe(true);
+    expect(localStorage.getItem('opex360:nov-formula-pending:Warner Media')).toBe('0');
+  });
+
+  it('blocks invalid calculations and retains pending changes for retry', async () => {
+    const props = await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Set NOV formula' }));
+    fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'OCT_FORECAST / DEC_FORECAST' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply formula' }));
+    act(() => props.onCellValueChanged({ data: { UNIQ_ID: 1, OCT_FORECAST: 5, DEC_FORECAST: 0 }, colDef: { field: 'DEC_FORECAST' } }));
+    queryRows.mockResolvedValueOnce({ rows: [{ UNIQ_ID: 1, OCT_FORECAST: 5, DEC_FORECAST: 0 }], totalRowCount: 1 });
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save (1)' })));
+    expect(saveRows).not.toHaveBeenCalled();
+    expect(screen.getByText(/Cannot calculate NOV for row 1/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save (1)' }).disabled).toBe(false);
+    expect(localStorage.getItem('opex360:nov-formula-pending:Warner Media')).toBe('1');
+  });
+
+  it('retains pending formula and edits when the save API fails', async () => {
+    const props = await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Set NOV formula' }));
+    fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'OCT_FORECAST * 2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply formula' }));
+    act(() => props.onCellValueChanged({ data: { UNIQ_ID: 1, OCT_FORECAST: 5, NOTES: 'pending' }, colDef: { field: 'NOTES' } }));
+    queryRows.mockResolvedValueOnce({ rows: [{ UNIQ_ID: 1, OCT_FORECAST: 5 }], totalRowCount: 1 });
+    saveRows.mockRejectedValueOnce(new Error('Database unavailable'));
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save (1)' })));
+    expect(screen.getByText('Database unavailable')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save (1)' }).disabled).toBe(false);
+    expect(localStorage.getItem('opex360:nov-formula-pending:Warner Media')).toBe('1');
+  });
+
+  it('recalculates NOV for subsequent edited rows without saving the whole template', async () => {
+    localStorage.setItem('opex360:nov-formula:Warner Media', 'DEC_FORECAST * 2');
+    localStorage.setItem('opex360:nov-formula-pending:Warner Media', '0');
+    const props = await renderPage();
+    expect(screen.getByRole('button', { name: 'Save' }).disabled).toBe(true);
+    act(() => props.onCellValueChanged({ data: { UNIQ_ID: 7, DEC_FORECAST: 5, NOV_FORECAST: 1 }, colDef: { field: 'DEC_FORECAST' } }));
+    saveRows.mockResolvedValueOnce({ saved: 1, message: 'Updated 1 row(s).' });
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save (1)' })));
+    expect(queryRows).not.toHaveBeenCalled();
+    expect(saveRows).toHaveBeenCalledWith('Warner Media', [{ UNIQ_ID: 7, DEC_FORECAST: 5, NOV_FORECAST: 10 }]);
+  });
+
+  it('restores an unsaved formula after reload and reports a short backend save', async () => {
+    localStorage.setItem('opex360:nov-formula:Warner Media', 'OCT_FORECAST + 1');
+    localStorage.setItem('opex360:nov-formula-pending:Warner Media', '1');
+    const props = await renderPage();
+    expect(screen.getByRole('button', { name: 'Save' }).disabled).toBe(true);
+    act(() => props.onCellValueChanged({ data: { UNIQ_ID: 1, OCT_FORECAST: 10, NOTES: 'edited' }, colDef: { field: 'NOTES' } }));
+    queryRows.mockResolvedValueOnce({ rows: [{ UNIQ_ID: 1, OCT_FORECAST: 10 }], totalRowCount: 1 });
+    saveRows.mockResolvedValueOnce({ saved: 0, message: 'Updated 0 row(s).' });
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save (1)' })));
+    expect(screen.getByText(/server saved 0 of 1 requested rows/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save (1)' }).disabled).toBe(false);
+    expect(localStorage.getItem('opex360:nov-formula-pending:Warner Media')).toBe('1');
+  });
+
   it('keeps metadata descriptors scrollable with a visible horizontal scrollbar', async () => {
     getMetadata.mockResolvedValueOnce({
       columns: ['TEMPLATE_NAME', 'DER_PROJECT_NAME', 'CURRENCY', 'AGG_TYPE'],

@@ -6,6 +6,26 @@ import {
   parseClipboardText,
 } from './clipboard';
 
+it('does not paste into calculated columns, including full-row insertions', () => {
+  const data = { NOV_FORECAST: 5, DEC_FORECAST: 10 };
+  const columns = ['NOV_FORECAST', 'DEC_FORECAST'].map((field) => ({
+    getColId: () => field,
+    getColDef: () => ({ field, context: { calculated: field === 'NOV_FORECAST' } }),
+    isCellEditable: () => field !== 'NOV_FORECAST',
+  }));
+  const node = { id: '1', data, setDataValue: (field, value) => { data[field] = value; } };
+  const api = {
+    getFocusedCell: () => ({ rowIndex: 0, column: columns[0] }),
+    getAllDisplayedColumns: () => columns,
+    getDisplayedRowAtIndex: () => node,
+  };
+  applyPasteToGrid(api, [['20', '30']]);
+  expect(data).toEqual({ NOV_FORECAST: 5, DEC_FORECAST: '30' });
+  const [inserted] = createRowsFromFullRowPaste(api, [['20', '30']], { templateName: 'T', version: 'V', createId: () => -1 });
+  expect(inserted.NOV_FORECAST).toBeUndefined();
+  expect(inserted.DEC_FORECAST).toBe('30');
+});
+
 it('parses Excel tab/newline text', () => {
   expect(parseClipboardText('1\t2\r\n3\t4\r\n')).toEqual([
     ['1', '2'],

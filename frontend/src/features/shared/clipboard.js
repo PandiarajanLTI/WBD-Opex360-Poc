@@ -46,7 +46,7 @@ export function createRowsFromFullRowPaste(
     cells.forEach((raw, index) => {
       const column = columns[index];
       const field = column.getColDef().field;
-      if (IMMUTABLE_COLUMNS.has(field) || field === 'UPDATED_TS') return;
+      if (IMMUTABLE_COLUMNS.has(field) || field === 'UPDATED_TS' || column.getColDef().context?.calculated) return;
       const value = column.getColDef().valueParser
         ? column.getColDef().valueParser({
             newValue: raw.trim(),
@@ -95,6 +95,7 @@ export function applyPasteToGrid(
       const colDef = column.getColDef();
       if (
         IMMUTABLE_COLUMNS.has(colDef.field) ||
+        colDef.context?.calculated ||
         ((editableOnly || !isFullRowPaste) && !column.isCellEditable(node))
       ) {
         return;

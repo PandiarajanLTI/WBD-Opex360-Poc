@@ -521,6 +521,43 @@ main {
   gap: 8px;
   margin-top: 12px;
 }
+.nov-formula-backdrop {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.nov-formula-panel p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.nov-formula-panel .formula-error {
+  color: #b42318;
+}
+.formula-fields {
+  font-size: 12px;
+}
+.formula-fields summary {
+  color: var(--primary);
+  cursor: pointer;
+}
+.formula-fields p {
+  max-height: 100px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.nov-formula-notice {
+  display: block;
+  padding: 8px 14px;
+  color: #344a82;
+  background: #f0f4ff;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 
 /* Forecast detail workspace */
 .app-header {
