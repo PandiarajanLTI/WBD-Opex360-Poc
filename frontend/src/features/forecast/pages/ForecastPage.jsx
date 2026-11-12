@@ -23,6 +23,9 @@ import {
 } from '../../shared/clipboard';
 const PAGE_SIZE = 100;
 const CACHE_BLOCK_SIZE = PAGE_SIZE;
+const BULK_PAGE_SIZE = 500;
+const BULK_SAVE_BATCH_SIZE = 500;
+const BULK_CONCURRENCY = 3;
 const SUMMARY_COLUMN_DEFS = [
   {
     field: 'FSI_ACCOUNT',
@@ -415,24 +418,73 @@ export default function ForecastPage() {
     prioritizeLatestUpdates();
   };
   const applyBulkUpdate = useCallback(
-    (field, value) => {
-      const selectedRows = gridRef.current?.api.getSelectedRows() ?? [];
-      if (!selectedRows.length) return;
-      const selectedNodes = gridRef.current?.api.getSelectedNodes() ?? [];
-      selectedNodes.forEach((node) => {
-        node.setDataValue(field, value);
-        node.data.__editedFields = [
-          ...new Set([...(node.data.__editedFields ?? []), field]),
-        ];
-        node.data.__editedAt = Date.now();
-        markDirty(node.data);
-      });
+    async (field, value) => {
+      if (isSaving || !totalRowCount) return;
+      setIsSaving(true);
       closeTransientUi();
-      setMessage(
-        `Applied ${field} to ${selectedRows.length} row(s). Save to persist the changes.`,
-      );
+      setMessage(`Preparing bulk update for all ${totalRowCount.toLocaleString()} records…`);
+
+      try {
+        const requests = [];
+        for (let startRow = 0; startRow < totalRowCount; startRow += BULK_PAGE_SIZE) {
+          requests.push({
+            startRow,
+            endRow: Math.min(startRow + BULK_PAGE_SIZE, totalRowCount),
+            sortModel: [],
+            filterModel: {},
+          });
+        }
+
+        const rows = [];
+        for (let start = 0; start < requests.length; start += BULK_CONCURRENCY) {
+          const pageResults = await Promise.all(
+            requests
+              .slice(start, start + BULK_CONCURRENCY)
+              .map((request) => forecastService.queryRows(decodedName, request)),
+          );
+          pageResults.forEach((result) => rows.push(...result.rows));
+          setMessage(
+            `Loaded ${Math.min(rows.length, totalRowCount).toLocaleString()} of ${totalRowCount.toLocaleString()} records…`,
+          );
+        }
+
+        const uniqueRows = [...new Map(rows.map((row) => [row.UNIQ_ID, row])).values()];
+        const payload = uniqueRows.map((row) => ({ ...row, [field]: value }));
+        let processed = 0;
+
+        for (let start = 0; start < payload.length; start += BULK_SAVE_BATCH_SIZE * BULK_CONCURRENCY) {
+          const window = payload.slice(
+            start,
+            start + BULK_SAVE_BATCH_SIZE * BULK_CONCURRENCY,
+          );
+          const batches = [];
+          for (let offset = 0; offset < window.length; offset += BULK_SAVE_BATCH_SIZE) {
+            batches.push(window.slice(offset, offset + BULK_SAVE_BATCH_SIZE));
+          }
+          await Promise.all(
+            batches.map((batch) => forecastService.saveRows(decodedName, batch)),
+          );
+          processed += window.length;
+          setMessage(
+            `Updated ${Math.min(processed, payload.length).toLocaleString()} of ${payload.length.toLocaleString()} records…`,
+          );
+        }
+
+        dirtyRowsRef.current = new Map();
+        setDirtyMap(new Map());
+        gridRef.current?.api.deselectAll?.();
+        setSelectedCount(0);
+        prioritizeLatestUpdates();
+        setMessage(
+          `Bulk update completed. ${payload.length.toLocaleString()} records were updated in asynchronous batches.`,
+        );
+      } catch (error) {
+        setMessage(`Bulk update stopped: ${error.message}`);
+      } finally {
+        setIsSaving(false);
+      }
     },
-    [closeTransientUi, markDirty],
+    [closeTransientUi, decodedName, isSaving, totalRowCount],
   );
   const save = async () => {
     if (!dirtyRows.length || isSaving) return;
@@ -576,7 +628,7 @@ export default function ForecastPage() {
       )}
       {isBulkUpdateOpen && (
         <BulkUpdatePanel
-          selectedCount={selectedCount}
+          selectedCount={totalRowCount}
           onApply={applyBulkUpdate}
           onClose={() => setIsBulkUpdateOpen(false)}
         />
@@ -829,11 +881,11 @@ export default function ForecastPage() {
                         Duplicate selected row
                       </button>
                       <button
-                        disabled={!selectedCount}
+                        disabled={!totalRowCount || isSaving}
                         onClick={() => setIsBulkUpdateOpen(true)}
                         type="button"
                       >
-                        Bulk update ({selectedCount})
+                        Bulk update all ({totalRowCount.toLocaleString()})
                       </button>
                     </>
                   )}
