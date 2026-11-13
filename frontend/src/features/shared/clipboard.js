@@ -6,27 +6,31 @@ export function parseClipboardText(text) {
   return lines.map((line) => line.split('\t'));
 }
 
-export function copyRowsToClipboard(api, { copySelectedRows = false } = {}) {
-  const columns = api
+export function copyRowsToClipboard(
+  api,
+  { includeHeaders = true, focusedCellOnly = false } = {},
+) {
+  const displayedColumns = api
     ?.getAllDisplayedColumns?.()
     .filter((column) => column.getColDef().field);
-  if (!columns?.length) return '';
+  if (!displayedColumns?.length) return '';
 
   const focused = api.getFocusedCell?.();
-  const selectedNodes = copySelectedRows
-    ? api.getSelectedNodes?.()?.filter((node) => node?.data) ?? []
-    : [];
+  const selectedNodes = focusedCellOnly
+    ? []
+    : api.getSelectedNodes?.()?.filter((node) => node?.data) ?? [];
   const nodes = selectedNodes.length
     ? selectedNodes.sort((a, b) => (a.rowIndex ?? 0) - (b.rowIndex ?? 0))
     : [api.getDisplayedRowAtIndex?.(focused?.rowIndex)].filter((node) => node?.data);
-  const copiedColumns = selectedNodes.length
-    ? columns
-    : columns.filter(
-        (column) => column.getColId?.() === focused?.column?.getColId?.(),
-      );
+  const copiedColumns =
+    selectedNodes.length && !focusedCellOnly
+      ? displayedColumns
+      : displayedColumns.filter(
+          (column) => column.getColId?.() === focused?.column?.getColId?.(),
+        );
   if (!copiedColumns.length) return '';
 
-  return nodes
+  const copiedData = nodes
     .map((node) =>
       copiedColumns
         .map((column) => {
@@ -49,6 +53,19 @@ export function copyRowsToClipboard(api, { copySelectedRows = false } = {}) {
         .join('\t'),
     )
     .join('\n');
+  const headers = copiedColumns
+    .map((column) => {
+      const colDef = column.getColDef();
+      const header = colDef.headerName ?? colDef.field ?? column.getColId?.() ?? '';
+      return String(typeof header === 'function' ? header() : header).replace(
+        /[\t\r\n]+/g,
+        ' ',
+      );
+    })
+    .join('\t');
+  return includeHeaders
+    ? `${headers}${copiedData ? `\n${copiedData}` : ''}`
+    : copiedData;
 }
 
 const IMMUTABLE_COLUMNS = new Set([
@@ -99,6 +116,65 @@ export function createRowsFromFullRowPaste(
             data: row,
             column,
             colDef: column.getColDef(),
+            api,
+          })
+        : raw;
+      if (typeof value === 'number' && Number.isNaN(value)) return;
+      row[field] = value;
+      row.__editedFields.push(field);
+    });
+    return row;
+  });
+}
+
+export function createRowsFromHeaderPaste(
+  api,
+  matrix,
+  { templateName, version, createId },
+) {
+  if (!matrix.length) return null;
+  const columns = api
+    .getAllDisplayedColumns()
+    .filter((column) => column.getColDef().field);
+  const normalize = (value) => String(value ?? '').trim().toLocaleLowerCase();
+  const columnByHeader = new Map();
+  columns.forEach((column) => {
+    const colDef = column.getColDef();
+    [colDef.headerName, colDef.field, column.getColId()].forEach((header) => {
+      if (header) columnByHeader.set(normalize(header), column);
+    });
+  });
+  const sourceColumns = matrix[0].map((header) => columnByHeader.get(normalize(header)));
+  if (!sourceColumns.length || sourceColumns.some((column) => !column)) return null;
+
+  return matrix.slice(1).map((cells) => {
+    const row = {
+      UNIQ_ID: createId(),
+      TEMPLATE_NAME: templateName,
+      VERSION: version,
+      INSERTED: 'Y',
+      __editedFields: [],
+      __editedAt: Date.now(),
+    };
+    cells.forEach((raw, index) => {
+      const column = sourceColumns[index];
+      if (!column) return;
+      const colDef = column.getColDef();
+      const field = colDef.field;
+      if (
+        IMMUTABLE_COLUMNS.has(field) ||
+        field === 'UPDATED_TS' ||
+        colDef.context?.calculated
+      ) {
+        return;
+      }
+      const value = colDef.valueParser
+        ? colDef.valueParser({
+            newValue: raw.trim(),
+            oldValue: undefined,
+            data: row,
+            column,
+            colDef,
             api,
           })
         : raw;

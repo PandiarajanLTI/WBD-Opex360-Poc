@@ -1079,20 +1079,6 @@ main {
 .grid-toolbar-actions {
   gap: 8px;
 }
-.copy-selected-rows-toggle {
-  display: inline-flex;
-  min-height: 30px;
-  align-items: center;
-  gap: 6px;
-  color: #454852;
-  cursor: pointer;
-  font-size: 11px;
-  white-space: nowrap;
-}
-.copy-selected-rows-toggle input {
-  margin: 0;
-  accent-color: var(--primary);
-}
 .field-picker,
 .more-actions {
   position: relative;
@@ -1168,6 +1154,7 @@ main {
   z-index: 20;
   display: grid;
   min-width: 150px;
+  max-width: 260px;
   gap: 3px;
   padding: 5px;
   border: 1px solid var(--border);
@@ -1211,20 +1198,6 @@ main {
   .forecast-page-heading {
     align-items: flex-start;
     flex-direction: column;
-  }
-  .forecast-heading-actions {
-    justify-content: flex-start;
-  }
-}
-@media (max-width: 700px) {
-  .primary-nav {
-    justify-content: flex-start;
-  }
-  .primary-nav .nav-placeholder {
-    display: none;
-  }
-  main {
-    padding: 14px 12px 24px;
   }
   .forecast-heading-actions {
     width: 100%;
