@@ -318,9 +318,9 @@ describe('forecast column visibility', () => {
 
   it('copies selected forecast rows to the system clipboard', async () => {
     const props = await renderPage();
-    fireEvent.click(screen.getByLabelText('Copy Selected Rows'));
     const columns = ['COMPANY_CODE', 'NOTES'].map((field) => ({
-      getColDef: () => ({ field }),
+      getColDef: () => ({ field, headerName: field.replace('_', ' ') }),
+      getColId: () => field,
     }));
     const selectedNodes = [
       { rowIndex: 1, data: { COMPANY_CODE: 'US02', NOTES: 'Second' } },
@@ -343,7 +343,7 @@ describe('forecast column visibility', () => {
 
     expect(setData).toHaveBeenCalledWith(
       'text/plain',
-      'US01\tFirst\nUS02\tSecond',
+      'COMPANY CODE\tNOTES\nUS01\tFirst\nUS02\tSecond',
     );
   });
 
@@ -356,7 +356,114 @@ describe('forecast column visibility', () => {
 
     expect(screen.getByRole('menu', { name: 'Clipboard actions' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: 'Copy' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Copy with Headers' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Cut' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: 'Paste' })).toBeTruthy();
+    expect(screen.queryByLabelText('Copy Headers')).toBeNull();
+    expect(screen.queryByText('Columns to copy')).toBeNull();
+  });
+
+  it('inserts a copied headered row using the right-click Paste action', async () => {
+    const props = await renderPage();
+    const columns = [
+      {
+        getColId: () => 'COMPANY_CODE',
+        getColDef: () => ({ field: 'COMPANY_CODE', headerName: 'Company Code' }),
+      },
+      {
+        getColId: () => 'DEC_FORECAST',
+        getColDef: () => ({
+          field: 'DEC_FORECAST',
+          headerName: 'DEC',
+          valueParser: ({ newValue }) => Number(newValue),
+        }),
+      },
+    ];
+    props.onGridReady({
+      api: {
+        applyColumnState: vi.fn(),
+        getColumnState: () => [],
+        getAllDisplayedColumns: () => columns,
+      },
+    });
+    const clipboardDescriptor = Object.getOwnPropertyDescriptor(
+      navigator,
+      'clipboard',
+    );
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText: vi.fn().mockResolvedValue('Company Code\tDEC\nUS02\t75') },
+    });
+    saveRows.mockResolvedValueOnce({ saved: 1, message: 'Inserted 1 row(s).' });
+
+    fireEvent.contextMenu(document.querySelector('.ag-theme-quartz.grid'));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Paste' }));
+    });
+
+    expect(saveRows).toHaveBeenCalledWith(
+      'Warner Media',
+      [
+        expect.objectContaining({
+          COMPANY_CODE: 'US02',
+          DEC_FORECAST: 75,
+          INSERTED: 'Y',
+        }),
+      ],
+    );
+    if (clipboardDescriptor) {
+      Object.defineProperty(navigator, 'clipboard', clipboardDescriptor);
+    } else {
+      delete navigator.clipboard;
+    }
+  });
+
+  it('cuts the editable focused cell from the right-click menu', async () => {
+    const props = await renderPage();
+    const data = { NOTES: 'Move this text' };
+    const column = {
+      getColId: () => 'NOTES',
+      getColDef: () => ({ field: 'NOTES', headerName: 'Notes' }),
+      isCellEditable: () => true,
+    };
+    const node = {
+      data,
+      setDataValue: (field, value) => {
+        data[field] = value;
+      },
+    };
+    props.onGridReady({
+      api: {
+        applyColumnState: vi.fn(),
+        getColumnState: () => [],
+        getAllDisplayedColumns: () => [column],
+        getSelectedNodes: () => [],
+        getFocusedCell: () => ({ rowIndex: 0, column }),
+        getDisplayedRowAtIndex: () => node,
+      },
+    });
+    const clipboardDescriptor = Object.getOwnPropertyDescriptor(
+      navigator,
+      'clipboard',
+    );
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
+    fireEvent.contextMenu(document.querySelector('.ag-theme-quartz.grid'));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Cut' }));
+    });
+
+    expect(writeText).toHaveBeenCalledWith('Move this text');
+    expect(data.NOTES).toBeNull();
+    if (clipboardDescriptor) {
+      Object.defineProperty(navigator, 'clipboard', clipboardDescriptor);
+    } else {
+      delete navigator.clipboard;
+    }
   });
 
   it('persists field visibility changes in the saved grid layout', async () => {

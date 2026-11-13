@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import {
   applyPasteToGrid,
+  createRowsFromHeaderPaste,
   copyRowsToClipboard,
   createRowsFromFullRowPaste,
   isFullRowPaste,
@@ -10,11 +11,14 @@ import {
 it('copies selected rows as formatted TSV in displayed row order', () => {
   const columns = [
     {
-      getColDef: () => ({ field: 'NAME' }),
+      getColId: () => 'NAME',
+      getColDef: () => ({ field: 'NAME', headerName: 'Name' }),
     },
     {
+      getColId: () => 'TOTAL',
       getColDef: () => ({
         field: 'TOTAL',
+        headerName: 'Total',
         valueFormatter: ({ value }) => `$${value}`,
       }),
     },
@@ -29,9 +33,69 @@ it('copies selected rows as formatted TSV in displayed row order', () => {
     getValue: (column, node) => node.data[column.getColDef().field],
   };
 
-  expect(copyRowsToClipboard(api, { copySelectedRows: true })).toBe(
+  expect(copyRowsToClipboard(api)).toBe(
+    'Name\tTotal\nFirst\t$10\nSecond\t$20',
+  );
+  expect(copyRowsToClipboard(api, { includeHeaders: false })).toBe(
     'First\t$10\nSecond\t$20',
   );
+});
+
+it('copies the focused cell without headers when requested', () => {
+  const columns = ['NAME', 'TOTAL'].map((field) => ({
+    getColId: () => field,
+    getColDef: () => ({ field, headerName: field }),
+  }));
+  const row = { NAME: 'Focused', TOTAL: 30 };
+  const api = {
+    getAllDisplayedColumns: () => columns,
+    getSelectedNodes: () => [],
+    getFocusedCell: () => ({ rowIndex: 2, column: columns[0] }),
+    getDisplayedRowAtIndex: () => ({ data: row }),
+  };
+
+  expect(copyRowsToClipboard(api, { includeHeaders: false })).toBe('Focused');
+});
+
+it('creates inserted rows from copied column headers and values', () => {
+  const columns = [
+    {
+      getColId: () => 'COMPANY_CODE',
+      getColDef: () => ({ field: 'COMPANY_CODE', headerName: 'Company Code' }),
+    },
+    {
+      getColId: () => 'DEC_FORECAST',
+      getColDef: () => ({
+        field: 'DEC_FORECAST',
+        headerName: 'DEC',
+        valueParser: ({ newValue }) => (newValue === '' ? null : Number(newValue)),
+      }),
+    },
+  ];
+  const api = { getAllDisplayedColumns: () => columns };
+
+  expect(
+    createRowsFromHeaderPaste(
+      api,
+      [['DEC', 'Company Code'], ['125', 'US01']],
+      {
+        templateName: 'Warner Media',
+        version: '10+2',
+        createId: () => -1,
+      },
+    ),
+  ).toEqual([
+    expect.objectContaining({
+      UNIQ_ID: -1,
+      TEMPLATE_NAME: 'Warner Media',
+      VERSION: '10+2',
+      INSERTED: 'Y',
+      COMPANY_CODE: 'US01',
+      DEC_FORECAST: 125,
+      __editedFields: ['DEC_FORECAST', 'COMPANY_CODE'],
+    }),
+  ]);
+  expect(createRowsFromHeaderPaste(api, [['Unknown'], ['x']], {})).toBeNull();
 });
 
 it('copies the focused row when there is no row selection', () => {
@@ -48,7 +112,7 @@ it('copies the focused row when there is no row selection', () => {
     }),
   };
 
-  expect(copyRowsToClipboard(api)).toBe('Row 3');
+  expect(copyRowsToClipboard(api)).toBe('NOTES\nRow 3');
 });
 
 it('does not paste into calculated columns, including full-row insertions', () => {

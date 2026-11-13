@@ -20,6 +20,7 @@ import {
 } from '../utils/columnState';
 import {
   applyPasteToGrid,
+  createRowsFromHeaderPaste,
   copyRowsToClipboard,
   createRowsFromFullRowPaste,
   isFullRowPaste,
@@ -108,7 +109,6 @@ export default function ForecastPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [selectedCount, setSelectedCount] = useState(0);
-  const [copySelectedRows, setCopySelectedRows] = useState(false);
   const [clipboardMenu, setClipboardMenu] = useState(null);
   const [isBulkUpdateOpen, setIsBulkUpdateOpen] = useState(false);
   const [isFormulaOpen, setIsFormulaOpen] = useState(false);
@@ -663,20 +663,81 @@ export default function ForecastPage() {
   };
   const handleCopy = (event) => {
     if (['INPUT', 'TEXTAREA'].includes(event.target?.tagName)) return;
-    const text = copyRowsToClipboard(gridRef.current?.api, { copySelectedRows });
+    const text = copyRowsToClipboard(gridRef.current?.api);
     if (!text || !event.clipboardData) return;
     event.preventDefault();
     event.clipboardData.setData('text/plain', text);
-    setMessage(
-      copySelectedRows
-        ? `Copied ${text.split('\n').length} forecast row(s) to clipboard.`
-        : 'Copied the focused cell to clipboard.',
-    );
+    setMessage(`Copied forecast data with headers (${text.split('\n').length - 1} row(s)).`);
+  };
+  const getFocusedCutTarget = () => {
+    const api = gridRef.current?.api;
+    const focused = api?.getFocusedCell?.();
+    const node = focused && api.getDisplayedRowAtIndex?.(focused.rowIndex);
+    const column = focused?.column;
+    if (!node?.data || !column || column.isCellEditable?.(node) !== true) {
+      return null;
+    }
+    const text = copyRowsToClipboard(api, {
+      includeHeaders: false,
+      focusedCellOnly: true,
+    });
+    return text ? { text, node, column } : null;
+  };
+  const handleCut = (event) => {
+    if (['INPUT', 'TEXTAREA'].includes(event.target?.tagName)) return;
+    const target = getFocusedCutTarget();
+    if (!target || !event.clipboardData) {
+      setMessage('Cut is available only on an editable focused cell.');
+      return;
+    }
+    event.preventDefault();
+    event.clipboardData.setData('text/plain', target.text);
+    target.node.setDataValue(target.column.getColId(), null);
+    setMessage('Cut the focused cell. Save to persist the cleared value.');
+  };
+  const savePastedRows = async (newRows) => {
+    if (!newRows.length) {
+      setMessage('Nothing to paste. Copy one or more forecast data rows.');
+      return;
+    }
+    closeTransientUi();
+    setIsSaving(true);
+    trackGridRequest(1);
+    try {
+      const payload = newRows.map(
+        ({ __editedFields, __editedAt, ...row }) => row,
+      );
+      const result = await forecastService.saveRows(decodedName, payload);
+      newRows.forEach((row) => {
+        recentEditsRef.current.set(row.UNIQ_ID, {
+          fields: row.__editedFields,
+          updatedAt: Date.now(),
+        });
+      });
+      setMessage(`Inserted ${newRows.length} pasted row(s). ${result.message}`);
+      prioritizeLatestUpdates();
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setIsSaving(false);
+      trackGridRequest(-1);
+    }
   };
   const handlePasteText = async (text) => {
     const api = gridRef.current?.api;
     if (!api) return;
     const matrix = parseClipboardText(text);
+    if (activeLayoutView !== 'summary') {
+      const headerRows = createRowsFromHeaderPaste(api, matrix, {
+        templateName: decodedName,
+        version: metadata?.version ?? '10+2',
+        createId: () => nextPastedRowIdRef.current--,
+      });
+      if (headerRows) {
+        await savePastedRows(headerRows);
+        return;
+      }
+    }
     if (
       activeLayoutView !== 'summary' &&
       isFullRowPaste(api, matrix)
@@ -686,32 +747,7 @@ export default function ForecastPage() {
         version: metadata?.version ?? '10+2',
         createId: () => nextPastedRowIdRef.current--,
       });
-      if (!newRows.length) {
-        setMessage('Nothing pasted. Copy one or more complete forecast rows.');
-        return;
-      }
-      closeTransientUi();
-      setIsSaving(true);
-      trackGridRequest(1);
-      try {
-        const payload = newRows.map(
-          ({ __editedFields, __editedAt, ...row }) => row,
-        );
-        const result = await forecastService.saveRows(decodedName, payload);
-        newRows.forEach((row) => {
-          recentEditsRef.current.set(row.UNIQ_ID, {
-            fields: row.__editedFields,
-            updatedAt: Date.now(),
-          });
-        });
-        setMessage(`Inserted ${newRows.length} pasted row(s). ${result.message}`);
-        prioritizeLatestUpdates();
-      } catch (error) {
-        setMessage(error.message);
-      } finally {
-        setIsSaving(false);
-        trackGridRequest(-1);
-      }
+      await savePastedRows(newRows);
       return;
     }
     const changed = applyPasteToGrid(api, matrix, {
@@ -741,8 +777,8 @@ export default function ForecastPage() {
       top: Math.min(event.clientY, window.innerHeight - 130),
     });
   };
-  const copyFromContextMenu = async () => {
-    const text = copyRowsToClipboard(gridRef.current?.api, { copySelectedRows });
+  const copyFromContextMenu = async (includeHeaders = false) => {
+    const text = copyRowsToClipboard(gridRef.current?.api, { includeHeaders });
     if (!text) {
       setMessage('Focus a grid cell or select rows before copying.');
       setClipboardMenu(null);
@@ -751,9 +787,9 @@ export default function ForecastPage() {
     try {
       await navigator.clipboard.writeText(text);
       setMessage(
-        copySelectedRows
-          ? `Copied ${text.split('\n').length} forecast row(s) to clipboard.`
-          : 'Copied the focused cell to clipboard.',
+        includeHeaders
+          ? `Copied forecast data with headers (${text.split('\n').length - 1} row(s)).`
+          : `Copied forecast data (${text.split('\n').length} row(s)).`,
       );
     } catch {
       setMessage('Clipboard access was denied. Use Ctrl+C while the grid is focused.');
@@ -766,6 +802,22 @@ export default function ForecastPage() {
       await handlePasteText(text);
     } catch {
       setMessage('Clipboard access was denied. Allow access or use Ctrl+V in the grid.');
+    }
+    setClipboardMenu(null);
+  };
+  const cutFromContextMenu = async () => {
+    const target = getFocusedCutTarget();
+    if (!target) {
+      setMessage('Cut is available only on an editable focused cell.');
+      setClipboardMenu(null);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(target.text);
+      target.node.setDataValue(target.column.getColId(), null);
+      setMessage('Cut the focused cell. Save to persist the cleared value.');
+    } catch {
+      setMessage('Clipboard access was denied. The cell was not cleared.');
     }
     setClipboardMenu(null);
   };
@@ -1031,17 +1083,6 @@ export default function ForecastPage() {
             <div className="grid-toolbar-actions">
               {activeLayoutView !== 'summary' && (
                 <>
-                  <label className="copy-selected-rows-toggle">
-                    <input
-                      aria-label="Copy Selected Rows"
-                      checked={copySelectedRows}
-                      onChange={(event) =>
-                        setCopySelectedRows(event.target.checked)
-                      }
-                      type="checkbox"
-                    />
-                    Copy Selected Rows
-                  </label>
                   <details
                     className="field-picker"
                     onToggle={(event) =>
@@ -1122,6 +1163,7 @@ export default function ForecastPage() {
             className="ag-theme-quartz grid"
             onContextMenu={handleGridContextMenu}
             onCopy={handleCopy}
+            onCut={handleCut}
             onPaste={handlePaste}
           >
             <ForecastGrid
@@ -1186,11 +1228,23 @@ export default function ForecastPage() {
                 role="menu"
                 style={{ left: clipboardMenu.left, top: clipboardMenu.top }}
               >
-                <button onClick={copyFromContextMenu} role="menuitem" type="button">
-                  Copy
+                <button
+                  onClick={cutFromContextMenu}
+                  role="menuitem"
+                  title="Cuts the focused editable cell; rows are not deleted."
+                  type="button"
+                >
+                  Cut
                 </button>
+                <button onClick={() => copyFromContextMenu(false)} role="menuitem" type="button">
+                  Copy
+                </button>      
+                
                 <button onClick={pasteFromContextMenu} role="menuitem" type="button">
                   Paste
+                </button>
+                <button onClick={() => copyFromContextMenu(true)} role="menuitem" type="button">
+                  Copy with Headers
                 </button>
               </div>
             )}
@@ -1198,9 +1252,7 @@ export default function ForecastPage() {
           <div className="grid-footer">
             Showing {totalRowCount.toLocaleString()} records
             <span>•</span>
-            {copySelectedRows
-              ? 'Copy Selected Rows is on • Ctrl+C copies selected rows; right-click for clipboard actions'
-              : 'Ctrl+C copies the focused cell • right-click for clipboard actions'}
+            Select rows to copy them with headers, or focus a cell to copy that column • right-click for clipboard actions
           </div>
         </section>
       )}
