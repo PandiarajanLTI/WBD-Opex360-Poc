@@ -6,6 +6,51 @@ export function parseClipboardText(text) {
   return lines.map((line) => line.split('\t'));
 }
 
+export function copyRowsToClipboard(api, { copySelectedRows = false } = {}) {
+  const columns = api
+    ?.getAllDisplayedColumns?.()
+    .filter((column) => column.getColDef().field);
+  if (!columns?.length) return '';
+
+  const focused = api.getFocusedCell?.();
+  const selectedNodes = copySelectedRows
+    ? api.getSelectedNodes?.()?.filter((node) => node?.data) ?? []
+    : [];
+  const nodes = selectedNodes.length
+    ? selectedNodes.sort((a, b) => (a.rowIndex ?? 0) - (b.rowIndex ?? 0))
+    : [api.getDisplayedRowAtIndex?.(focused?.rowIndex)].filter((node) => node?.data);
+  const copiedColumns = selectedNodes.length
+    ? columns
+    : columns.filter(
+        (column) => column.getColId?.() === focused?.column?.getColId?.(),
+      );
+  if (!copiedColumns.length) return '';
+
+  return nodes
+    .map((node) =>
+      copiedColumns
+        .map((column) => {
+          const colDef = column.getColDef();
+          const value = api.getValue
+            ? api.getValue(column, node)
+            : node.data[colDef.field];
+          const formatted = colDef.valueFormatter
+            ? colDef.valueFormatter({
+                value,
+                data: node.data,
+                node,
+                column,
+                colDef,
+                api,
+              })
+            : value;
+          return String(formatted ?? '').replace(/[\t\r\n]+/g, ' ');
+        })
+        .join('\t'),
+    )
+    .join('\n');
+}
+
 const IMMUTABLE_COLUMNS = new Set([
   'UNIQ_ID',
   'TEMPLATE_NAME',
@@ -46,7 +91,7 @@ export function createRowsFromFullRowPaste(
     cells.forEach((raw, index) => {
       const column = columns[index];
       const field = column.getColDef().field;
-      if (IMMUTABLE_COLUMNS.has(field) || field === 'UPDATED_TS') return;
+      if (IMMUTABLE_COLUMNS.has(field) || field === 'UPDATED_TS' || column.getColDef().context?.calculated) return;
       const value = column.getColDef().valueParser
         ? column.getColDef().valueParser({
             newValue: raw.trim(),
@@ -95,6 +140,7 @@ export function applyPasteToGrid(
       const colDef = column.getColDef();
       if (
         IMMUTABLE_COLUMNS.has(colDef.field) ||
+        colDef.context?.calculated ||
         ((editableOnly || !isFullRowPaste) && !column.isCellEditable(node))
       ) {
         return;

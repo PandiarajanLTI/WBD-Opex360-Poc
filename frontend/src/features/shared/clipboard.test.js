@@ -1,10 +1,75 @@
 import { expect, it } from 'vitest';
 import {
   applyPasteToGrid,
+  copyRowsToClipboard,
   createRowsFromFullRowPaste,
   isFullRowPaste,
   parseClipboardText,
 } from './clipboard';
+
+it('copies selected rows as formatted TSV in displayed row order', () => {
+  const columns = [
+    {
+      getColDef: () => ({ field: 'NAME' }),
+    },
+    {
+      getColDef: () => ({
+        field: 'TOTAL',
+        valueFormatter: ({ value }) => `$${value}`,
+      }),
+    },
+  ];
+  const rows = [
+    { rowIndex: 2, data: { NAME: 'Second', TOTAL: 20 } },
+    { rowIndex: 0, data: { NAME: 'First', TOTAL: 10 } },
+  ];
+  const api = {
+    getAllDisplayedColumns: () => columns,
+    getSelectedNodes: () => rows,
+    getValue: (column, node) => node.data[column.getColDef().field],
+  };
+
+  expect(copyRowsToClipboard(api, { copySelectedRows: true })).toBe(
+    'First\t$10\nSecond\t$20',
+  );
+});
+
+it('copies the focused row when there is no row selection', () => {
+  const columns = ['COMPANY_CODE', 'NOTES'].map((field) => ({
+    getColId: () => field,
+    getColDef: () => ({ field }),
+  }));
+  const api = {
+    getAllDisplayedColumns: () => columns,
+    getSelectedNodes: () => [],
+    getFocusedCell: () => ({ rowIndex: 3, column: { getColId: () => 'NOTES' } }),
+    getDisplayedRowAtIndex: (index) => ({
+      data: { COMPANY_CODE: 'US01', NOTES: `Row ${index}` },
+    }),
+  };
+
+  expect(copyRowsToClipboard(api)).toBe('Row 3');
+});
+
+it('does not paste into calculated columns, including full-row insertions', () => {
+  const data = { NOV_FORECAST: 5, DEC_FORECAST: 10 };
+  const columns = ['NOV_FORECAST', 'DEC_FORECAST'].map((field) => ({
+    getColId: () => field,
+    getColDef: () => ({ field, context: { calculated: field === 'NOV_FORECAST' } }),
+    isCellEditable: () => field !== 'NOV_FORECAST',
+  }));
+  const node = { id: '1', data, setDataValue: (field, value) => { data[field] = value; } };
+  const api = {
+    getFocusedCell: () => ({ rowIndex: 0, column: columns[0] }),
+    getAllDisplayedColumns: () => columns,
+    getDisplayedRowAtIndex: () => node,
+  };
+  applyPasteToGrid(api, [['20', '30']]);
+  expect(data).toEqual({ NOV_FORECAST: 5, DEC_FORECAST: '30' });
+  const [inserted] = createRowsFromFullRowPaste(api, [['20', '30']], { templateName: 'T', version: 'V', createId: () => -1 });
+  expect(inserted.NOV_FORECAST).toBeUndefined();
+  expect(inserted.DEC_FORECAST).toBe('30');
+});
 
 it('parses Excel tab/newline text', () => {
   expect(parseClipboardText('1\t2\r\n3\t4\r\n')).toEqual([
