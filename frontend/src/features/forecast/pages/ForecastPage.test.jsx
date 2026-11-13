@@ -316,6 +316,49 @@ describe('forecast column visibility', () => {
     ).toBe('left');
   });
 
+  it('copies selected forecast rows to the system clipboard', async () => {
+    const props = await renderPage();
+    fireEvent.click(screen.getByLabelText('Copy Selected Rows'));
+    const columns = ['COMPANY_CODE', 'NOTES'].map((field) => ({
+      getColDef: () => ({ field }),
+    }));
+    const selectedNodes = [
+      { rowIndex: 1, data: { COMPANY_CODE: 'US02', NOTES: 'Second' } },
+      { rowIndex: 0, data: { COMPANY_CODE: 'US01', NOTES: 'First' } },
+    ];
+    props.onGridReady({
+      api: {
+        applyColumnState: vi.fn(),
+        getColumnState: () => [],
+        getAllDisplayedColumns: () => columns,
+        getSelectedNodes: () => selectedNodes,
+        getValue: (column, node) => node.data[column.getColDef().field],
+      },
+    });
+    const setData = vi.fn();
+
+    fireEvent.copy(document.querySelector('.ag-theme-quartz'), {
+      clipboardData: { setData },
+    });
+
+    expect(setData).toHaveBeenCalledWith(
+      'text/plain',
+      'US01\tFirst\nUS02\tSecond',
+    );
+  });
+
+  it('shows Copy and Paste actions from the grid right-click menu', async () => {
+    await renderPage();
+    fireEvent.contextMenu(document.querySelector('.ag-theme-quartz.grid'), {
+      clientX: 120,
+      clientY: 140,
+    });
+
+    expect(screen.getByRole('menu', { name: 'Clipboard actions' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Copy' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Paste' })).toBeTruthy();
+  });
+
   it('persists field visibility changes in the saved grid layout', async () => {
     const props = await renderPage();
     const state = [

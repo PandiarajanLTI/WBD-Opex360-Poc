@@ -20,6 +20,7 @@ import {
 } from '../utils/columnState';
 import {
   applyPasteToGrid,
+  copyRowsToClipboard,
   createRowsFromFullRowPaste,
   isFullRowPaste,
   parseClipboardText,
@@ -107,6 +108,8 @@ export default function ForecastPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [selectedCount, setSelectedCount] = useState(0);
+  const [copySelectedRows, setCopySelectedRows] = useState(false);
+  const [clipboardMenu, setClipboardMenu] = useState(null);
   const [isBulkUpdateOpen, setIsBulkUpdateOpen] = useState(false);
   const [isFormulaOpen, setIsFormulaOpen] = useState(false);
   const [savedFormula, setSavedFormula] = useState(() => ({
@@ -116,6 +119,25 @@ export default function ForecastPage() {
   }));
   const formula = savedFormula.template === decodedName ? savedFormula.value : '';
   const formulaPending = savedFormula.template === decodedName && savedFormula.pending;
+
+  useEffect(() => {
+    if (!clipboardMenu) return undefined;
+    const dismissMenu = (event) => {
+      if (!event.target.closest?.('.forecast-clipboard-menu')) {
+        setClipboardMenu(null);
+      }
+    };
+    const handleMenuKey = (event) => {
+      if (event.key === 'Escape') setClipboardMenu(null);
+    };
+    document.addEventListener('pointerdown', dismissMenu);
+    document.addEventListener('keydown', handleMenuKey);
+    return () => {
+      document.removeEventListener('pointerdown', dismissMenu);
+      document.removeEventListener('keydown', handleMenuKey);
+    };
+  }, [clipboardMenu]);
+
   const baseColumns = useMemo(() => createForecastColumns(metadata?.columns), [metadata?.columns]);
   const formulaFields = useMemo(
     () => baseColumns.filter((column) => column.type === 'numericColumn').map((column) => column.field),
@@ -639,12 +661,22 @@ export default function ForecastPage() {
       setIsSaving(false);
     }
   };
-  const handlePaste = async (event) => {
-    if (['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return;
+  const handleCopy = (event) => {
+    if (['INPUT', 'TEXTAREA'].includes(event.target?.tagName)) return;
+    const text = copyRowsToClipboard(gridRef.current?.api, { copySelectedRows });
+    if (!text || !event.clipboardData) return;
+    event.preventDefault();
+    event.clipboardData.setData('text/plain', text);
+    setMessage(
+      copySelectedRows
+        ? `Copied ${text.split('\n').length} forecast row(s) to clipboard.`
+        : 'Copied the focused cell to clipboard.',
+    );
+  };
+  const handlePasteText = async (text) => {
     const api = gridRef.current?.api;
     if (!api) return;
-    event.preventDefault();
-    const matrix = parseClipboardText(event.clipboardData.getData('text'));
+    const matrix = parseClipboardText(text);
     if (
       activeLayoutView !== 'summary' &&
       isFullRowPaste(api, matrix)
@@ -695,6 +727,47 @@ export default function ForecastPage() {
         : emptyPasteMessage,
     );
       if (changed.length) closeTransientUi();
+  };
+  const handlePaste = async (event) => {
+    if (['INPUT', 'TEXTAREA'].includes(event.target?.tagName)) return;
+    if (!gridRef.current?.api) return;
+    event.preventDefault();
+    await handlePasteText(event.clipboardData.getData('text'));
+  };
+  const handleGridContextMenu = (event) => {
+    event.preventDefault();
+    setClipboardMenu({
+      left: Math.min(event.clientX, window.innerWidth - 180),
+      top: Math.min(event.clientY, window.innerHeight - 130),
+    });
+  };
+  const copyFromContextMenu = async () => {
+    const text = copyRowsToClipboard(gridRef.current?.api, { copySelectedRows });
+    if (!text) {
+      setMessage('Focus a grid cell or select rows before copying.');
+      setClipboardMenu(null);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setMessage(
+        copySelectedRows
+          ? `Copied ${text.split('\n').length} forecast row(s) to clipboard.`
+          : 'Copied the focused cell to clipboard.',
+      );
+    } catch {
+      setMessage('Clipboard access was denied. Use Ctrl+C while the grid is focused.');
+    }
+    setClipboardMenu(null);
+  };
+  const pasteFromContextMenu = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      await handlePasteText(text);
+    } catch {
+      setMessage('Clipboard access was denied. Allow access or use Ctrl+V in the grid.');
+    }
+    setClipboardMenu(null);
   };
   const resetLayout = () => {
     localStorage.removeItem(`opex360:grid:${decodedName}`);
@@ -958,6 +1031,17 @@ export default function ForecastPage() {
             <div className="grid-toolbar-actions">
               {activeLayoutView !== 'summary' && (
                 <>
+                  <label className="copy-selected-rows-toggle">
+                    <input
+                      aria-label="Copy Selected Rows"
+                      checked={copySelectedRows}
+                      onChange={(event) =>
+                        setCopySelectedRows(event.target.checked)
+                      }
+                      type="checkbox"
+                    />
+                    Copy Selected Rows
+                  </label>
                   <details
                     className="field-picker"
                     onToggle={(event) =>
@@ -1034,7 +1118,12 @@ export default function ForecastPage() {
                 : 'The saved NOV formula is invalid or references unavailable fields. Edit or remove it to restore the calculated preview.'}
             </output>
           )}
-          <div className="ag-theme-quartz grid" onPaste={handlePaste}>
+          <div
+            className="ag-theme-quartz grid"
+            onContextMenu={handleGridContextMenu}
+            onCopy={handleCopy}
+            onPaste={handlePaste}
+          >
             <ForecastGrid
               key={activeLayoutView === 'summary' ? 'summary' : 'detail'}
               dimensionScroll={activeLayoutView !== 'summary'}
@@ -1090,11 +1179,28 @@ export default function ForecastPage() {
               onColumnMoved={handleColumnMoved}
               onColumnVisible={handleColumnVisible}
             />
+            {clipboardMenu && (
+              <div
+                aria-label="Clipboard actions"
+                className="forecast-clipboard-menu"
+                role="menu"
+                style={{ left: clipboardMenu.left, top: clipboardMenu.top }}
+              >
+                <button onClick={copyFromContextMenu} role="menuitem" type="button">
+                  Copy
+                </button>
+                <button onClick={pasteFromContextMenu} role="menuitem" type="button">
+                  Paste
+                </button>
+              </div>
+            )}
           </div>
           <div className="grid-footer">
             Showing {totalRowCount.toLocaleString()} records
             <span>•</span>
-            Select rows to duplicate or bulk update
+            {copySelectedRows
+              ? 'Copy Selected Rows is on • Ctrl+C copies selected rows; right-click for clipboard actions'
+              : 'Ctrl+C copies the focused cell • right-click for clipboard actions'}
           </div>
         </section>
       )}
