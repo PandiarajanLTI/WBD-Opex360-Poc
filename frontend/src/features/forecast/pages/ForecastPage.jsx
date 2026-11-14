@@ -26,7 +26,7 @@ import {
   isFullRowPaste,
   parseClipboardText,
 } from '../../shared/clipboard';
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 200;
 const CACHE_BLOCK_SIZE = PAGE_SIZE;
 const BULK_PAGE_SIZE = 500;
 const BULK_SAVE_BATCH_SIZE = 500;
@@ -590,6 +590,94 @@ export default function ForecastPage() {
     },
     [closeTransientUi, decodedName, isSaving, totalRowCount],
   );
+
+  const copyPriorForecastToForecast = useCallback(async () => {
+    if (isSaving || !totalRowCount) return;
+    if (formula) {
+      setMessage(
+        'Remove the NOV formula before copying prior forecast values. The formula would otherwise overwrite NOV Forecast during Save.',
+      );
+      return;
+    }
+
+    setIsSaving(true);
+    closeTransientUi();
+    setMessage(
+      `Preparing prior forecast values for all ${totalRowCount.toLocaleString()} records…`,
+    );
+
+    try {
+      const requests = [];
+      for (
+        let startRow = 0;
+        startRow < totalRowCount;
+        startRow += BULK_PAGE_SIZE
+      ) {
+        requests.push({
+          startRow,
+          endRow: Math.min(startRow + BULK_PAGE_SIZE, totalRowCount),
+          sortModel: [],
+          filterModel: {},
+        });
+      }
+
+      const rows = [];
+      for (let start = 0; start < requests.length; start += BULK_CONCURRENCY) {
+        const pageResults = await Promise.all(
+          requests
+            .slice(start, start + BULK_CONCURRENCY)
+            .map((request) => forecastService.queryRows(decodedName, request)),
+        );
+        pageResults.forEach((result) => rows.push(...result.rows));
+        setMessage(
+          `Loaded ${Math.min(rows.length, totalRowCount).toLocaleString()} of ${totalRowCount.toLocaleString()} records…`,
+        );
+      }
+
+      const uniqueRows = [
+        ...new Map(rows.map((row) => [row.UNIQ_ID, row])).values(),
+      ];
+      const nextDirtyMap = new Map(dirtyRowsRef.current);
+
+      uniqueRows.forEach((sourceRow) => {
+        const existingRow = nextDirtyMap.get(sourceRow.UNIQ_ID);
+        const row = existingRow ? { ...sourceRow, ...existingRow } : { ...sourceRow };
+        row.NOV_FORECAST = row.NOV_PRIOR_FORECAST;
+        row.DEC_FORECAST = row.DEC_PRIOR_FORECAST;
+        row.__editedFields = [
+          ...new Set([
+            ...(row.__editedFields ?? []),
+            'NOV_FORECAST',
+            'DEC_FORECAST',
+          ]),
+        ];
+        row.__editedAt = Date.now();
+        nextDirtyMap.set(row.UNIQ_ID, row);
+      });
+
+      dirtyRowsRef.current = nextDirtyMap;
+      setDirtyMap(new Map(nextDirtyMap));
+      gridRef.current?.api.refreshInfiniteCache?.();
+      gridRef.current?.api.refreshCells?.({
+        columns: ['NOV_FORECAST', 'DEC_FORECAST'],
+        force: true,
+      });
+      setMessage(
+        `Copied NOV Prior Forecast to NOV Forecast and DEC Prior Forecast to DEC Forecast for ${uniqueRows.length.toLocaleString()} records. Click Save to persist the changes.`,
+      );
+    } catch (error) {
+      setMessage(`Unable to copy prior forecast values: ${error.message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [
+    closeTransientUi,
+    decodedName,
+    formula,
+    isSaving,
+    totalRowCount,
+  ]);
+
   const save = async () => {
     gridRef.current?.api.stopEditing?.();
     const rowsToSave = [...dirtyRowsRef.current.values()];
@@ -1132,6 +1220,19 @@ export default function ForecastPage() {
                       <button onClick={duplicateSelected} type="button">
                         Duplicate selected row
                       </button>
+
+                      <button
+                        disabled={!totalRowCount || isSaving || Boolean(formula)}
+                        title={
+                          formula
+                            ? 'Remove the NOV formula before copying prior forecast values'
+                            : 'Copy NOV/DEC Prior Forecast into NOV/DEC Forecast for all records'
+                        }
+                        onClick={copyPriorForecastToForecast}
+                        type="button"
+                      >
+                        Copy prior forecast to forecast ({totalRowCount.toLocaleString()})
+                      </button>
                       <button
                         disabled={!totalRowCount || isSaving || dirtyRows.length > 0}
                         title={dirtyRows.length > 0 ? 'Save pending changes before a bulk update' : undefined}
@@ -1182,9 +1283,9 @@ export default function ForecastPage() {
               }
               cacheBlockSize={CACHE_BLOCK_SIZE}
               maxBlocksInCache={5}
-              pagination
-              paginationPageSize={PAGE_SIZE}
-              paginationPageSizeSelector={[100, 200, 500, 1000]}
+              cacheOverflowSize={20}
+              maxConcurrentDatasourceRequests={2}
+              infiniteInitialRowCount={PAGE_SIZE}
               getRowId={({ data }) =>
                 String(
                   data.UNIQ_ID ??
