@@ -1,12 +1,43 @@
+const LOCKED_LEFT_COLUMNS = new Set([
+  'TEMPLATE_NAME',
+  'VERSION',
+  'COMPANY_CODE',
+  'BRAND',
+  'GEOGRAPHY',
+  'COST_CENTER',
+  'PROFIT_CENTER',
+  'CURRENCY',
+  'REPORTABLE',
+  'BUSINESS_UNIT',
+  'DER_VENDOR_NAME',
+  'DER_PROJECT_NAME',
+  'DER_INTERNAL_ORDER_ID',
+  'DER_PURCHASE_ORDER',
+  'FORECAST_DRIVER_ID',
+  'AGG_TYPE',
+  'FSI_ACCOUNT',
+]);
+
+export const isLockedLeft = (field) => LOCKED_LEFT_COLUMNS.has(field);
+
 export const DESCRIPTOR_COLUMNS = [
   ['TEMPLATE_NAME', 'Template'],
   ['VERSION', 'Version'],
   ['COMPANY_CODE', 'Company Code'],
-  ['PROFIT_CENTER', 'Profit Center'],
-  ['COST_CENTER', 'Cost Center'],
-  ['FSI_ACCOUNT', 'FSI Account'],
-  ['GEOGRAPHY', 'Geography'],
   ['BRAND', 'Brand'],
+  ['GEOGRAPHY', 'Geography'],
+  ['COST_CENTER', 'Cost Center'],
+  ['PROFIT_CENTER', 'Profit Center'],
+  ['CURRENCY', 'Currency'],
+  ['REPORTABLE', 'Reportable'],
+  ['BUSINESS_UNIT', 'Business Unit'],
+  ['DER_VENDOR_NAME', 'DER Vendor Name'],
+  ['DER_PROJECT_NAME', 'DER Project Name'],
+  ['DER_INTERNAL_ORDER_ID', 'DER Internal Order ID'],
+  ['DER_PURCHASE_ORDER', 'DER Purchase Order'],
+  ['FORECAST_DRIVER_ID', 'Forecast Driver ID'],
+  ['AGG_TYPE', 'AGG Type'],
+  ['FSI_ACCOUNT', 'FSI Account'],
   ['NOTES', 'Notes'],
 ];
 export const MONTH_COLUMNS = [
@@ -23,17 +54,21 @@ export const MONTH_COLUMNS = [
   'NOV',
   'DEC',
 ];
-export function createForecastColumns() {
+export function createForecastColumns(apiColumns = [], novFormula = null) {
   const descriptor = DESCRIPTOR_COLUMNS.map(([field, headerName]) => ({
     field,
     headerName,
     colId: field,
-    pinned: 'left',
-    lockPinned: false,
-    suppressMovable: false,
+    pinned: isLockedLeft(field) ? 'left' : null,
+    lockPinned: isLockedLeft(field),
+    suppressMovable: isLockedLeft(field),
     editable: ({ data }) => data?.INSERTED === 'Y' || field === 'NOTES',
     filter: 'agTextColumnFilter',
     minWidth: field === 'NOTES' ? 220 : 130,
+    cellClassRules: {
+      'recently-edited-cell': ({ data }) =>
+        data?.__editedFields?.includes(field) ?? false,
+    },
     context: { columnType: 'descriptor' },
   }));
   const months = MONTH_COLUMNS.map((month) => ({
@@ -41,18 +76,30 @@ export function createForecastColumns() {
     headerName: month,
     colId: `${month}_FORECAST`,
     editable: ({ data }) =>
-      data?.INSERTED === 'Y' || ['NOV', 'DEC'].includes(month),
-    filter: 'agNumberColumnFilter',
+      !(month === 'NOV' && novFormula) &&
+      (data?.INSERTED === 'Y' || ['NOV', 'DEC'].includes(month)),
+    filter: month === 'NOV' && novFormula ? false : 'agNumberColumnFilter',
+    ...(month === 'NOV' && novFormula
+      ? {
+          headerName: 'NOV ƒx',
+          headerTooltip: 'Calculated NOV; select Save to persist the values',
+          sortable: false,
+          valueGetter: ({ data }) => (data ? novFormula(data) : null),
+        }
+      : {}),
     type: 'numericColumn',
     valueParser: ({ newValue }) => (newValue === '' ? null : Number(newValue)),
     cellClassRules: {
       'editable-cell': ({ data }) =>
-        data?.INSERTED === 'Y' || ['NOV', 'DEC'].includes(month),
+        !(month === 'NOV' && novFormula) &&
+        (data?.INSERTED === 'Y' || ['NOV', 'DEC'].includes(month)),
+      'recently-edited-cell': ({ data }) =>
+        data?.__editedFields?.includes(`${month}_FORECAST`) ?? false,
     },
     minWidth: 110,
-    context: { columnType: 'month', monthOrder: MONTH_COLUMNS.indexOf(month) },
+    context: { columnType: 'month', monthOrder: MONTH_COLUMNS.indexOf(month), calculated: month === 'NOV' && Boolean(novFormula) },
   }));
-  return [
+  const columns = [
     ...descriptor,
     ...months,
     {
@@ -64,5 +111,44 @@ export function createForecastColumns() {
       minWidth: 130,
       context: { columnType: 'summary' },
     },
+    {
+      field: 'UPDATED_TS',
+      colId: 'UPDATED_TS',
+      hide: false,
+      sortable: true,
+    },
+  ];
+  const knownFields = new Set(columns.map(({ colId }) => colId));
+  const additionalColumns = [...new Set(apiColumns)]
+    .filter((field) => typeof field === 'string' && !knownFields.has(field))
+    .map((field) => {
+      const isNumeric =
+        /_(ACTUALS|FORECAST|BUDGET|PRATE|AMOUNT|VARIANCE|WORKING_FORECAST|PRIORFORECAST|PRIORACTUALS)$/.test(
+          field,
+        ) || field === 'FX_RATE';
+      return {
+        field,
+        colId: field,
+        headerName: field.replaceAll('_', ' '), 
+        // Keep metadata descriptors in the horizontally scrollable viewport.
+        pinned: null,
+        lockPinned: isLockedLeft(field),
+        suppressMovable: isLockedLeft(field),
+        editable: ({ data }) => data?.INSERTED === 'Y',
+        filter: isNumeric ? 'agNumberColumnFilter' : 'agTextColumnFilter',
+        ...(isNumeric ? { type: 'numericColumn' } : {}),
+        minWidth: 140,
+        cellClassRules: {
+          'recently-edited-cell': ({ data }) =>
+            data?.__editedFields?.includes(field) ?? false,
+        },
+        context: { columnType: isLockedLeft(field) ? 'descriptor' : 'api' },
+      };
+    });
+  return [
+    ...descriptor,
+    ...additionalColumns.filter((column) => isLockedLeft(column.field)),
+    ...columns.slice(descriptor.length),
+    ...additionalColumns.filter((column) => !isLockedLeft(column.field)),
   ];
 }

@@ -169,30 +169,6 @@ export default function LandingPage() {
               </select>
             </label>
           </div>
-          <div className="template-toolbar-actions">
-            <button
-              className={`manager-view-button${managerView ? ' is-selected' : ''}`}
-              type="button"
-              aria-pressed={managerView}
-              onClick={() => setManagerView((current) => !current)}
-            >
-              {managerView ? 'Manager View On' : 'Manager View'}
-            </button>
-            <button
-              className="upload-template-button"
-              onClick={() => setDialog('upload')}
-              type="button"
-            >
-              Upload template
-            </button>
-            <button
-              className="create-template-button"
-              onClick={() => setDialog('create')}
-              type="button"
-            >
-              <span aria-hidden="true">＋</span> Create template
-            </button>
-          </div>
         </div>
 
         <div className="versions-table-card">
