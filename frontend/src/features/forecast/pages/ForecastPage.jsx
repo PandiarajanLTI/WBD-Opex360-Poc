@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import ForecastGrid from '../components/ForecastGrid';
 import AddForecastRowPanel from '../components/AddForecastRowPanel';
+import InlineForecastCell from '../components/InlineForecastCell';
 import BulkUpdatePanel from '../components/BulkUpdatePanel';
 import CreateForecastViewPanel from '../components/CreateForecastViewPanel';
 import RequiredDimensionsDialog from '../components/RequiredDimensionsDialog';
@@ -35,6 +36,35 @@ const BULK_FIELDS_WITHOUT_NOV = [
   { field: 'DEC_FORECAST', label: 'December Forecast', type: 'number' },
   { field: 'NOTES', label: 'Notes', type: 'text' },
 ];
+const REQUIRED_NEW_ROW_FIELDS = [
+  'COMPANY_CODE',
+  'PROFIT_CENTER',
+  'COST_CENTER',
+  'FSI_ACCOUNT',
+  'GEOGRAPHY',
+  'BRAND',
+];
+const INLINE_ROW_SYSTEM_FIELDS = new Set([
+  'UNIQ_ID',
+  'ID',
+  'ALL_DIM_ID',
+  'TEMPLATE_PRIMARY_KEY',
+  'TEMPLATE_NAME',
+  'VERSION',
+  'UPDATED_TS',
+  'FY_WORKING_FORECAST',
+  'FY_WORKING_FORECAST_PRATE',
+  'FX_RATE',
+  'FX_RATE_TYPE',
+  'FX_YEAR',
+]);
+function hasRequiredInlineFields(values) {
+  return (
+    REQUIRED_NEW_ROW_FIELDS.every((field) =>
+      String(values?.[field] ?? '').trim(),
+    ) && String(values?.CURRENCY ?? '').trim()
+  );
+}
 function readNovFormula(template) {
   try {
     return localStorage.getItem(`opex360:nov-formula:${template}`) ?? '';
@@ -87,6 +117,139 @@ const currency = new Intl.NumberFormat('en-US', {
   currency: 'USD',
   maximumFractionDigits: 0,
 });
+
+function buildInlineRowPayload({
+  values,
+  columns,
+  templateName,
+  version,
+  formula,
+  calculateNov,
+  formulaPending,
+}) {
+  const missing = REQUIRED_NEW_ROW_FIELDS.filter(
+    (field) => !String(values[field] ?? '').trim(),
+  );
+  if (missing.length || !String(values.CURRENCY ?? '').trim()) {
+    const required = [...missing, ...(!String(values.CURRENCY ?? '').trim() ? ['CURRENCY'] : [])];
+    throw new Error(`Complete required fields before saving: ${required.join(', ')}.`);
+  }
+  if (formula && !calculateNov) {
+    throw new Error('The NOV formula is invalid. Edit or remove it before saving a new row.');
+  }
+
+  const row = {
+    UNIQ_ID: values.__INLINE_NEW_ROW_ID,
+    TEMPLATE_NAME: templateName,
+    VERSION: version,
+    CURRENCY: String(values.CURRENCY).trim(),
+    STATUS: String(values.STATUS || 'Working').trim(),
+    INSERTED: 'Y',
+  };
+  columns.forEach((column) => {
+    const field = column.field;
+    const raw = values[field];
+    if (
+      !field ||
+      INLINE_ROW_SYSTEM_FIELDS.has(field) ||
+      column.context?.calculated ||
+      raw === undefined ||
+      raw === ''
+    ) {
+      return;
+    }
+    let value = raw;
+    if (column.valueParser) {
+      value = column.valueParser({ newValue: raw, data: values });
+    } else if (column.type === 'numericColumn') {
+      value = Number(raw);
+    }
+    if (typeof value === 'number' && !Number.isFinite(value)) {
+      throw new TypeError(`${column.headerName ?? field} must be a number.`);
+    }
+    row[field] = value;
+  });
+  if (calculateNov && !formulaPending) {
+    const nov = calculateNov(row);
+    if (nov === null || !Number.isFinite(nov)) {
+      throw new Error('NOV cannot be calculated. Check the formula inputs before saving.');
+    }
+    row.NOV_FORECAST = nov;
+  }
+  return row;
+}
+
+function mapInlinePaste({ text, field, api, columnDefs, values }) {
+  const matrix = String(text ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n$/, '')
+    .split('\n')
+    .map((line) => line.split('\t'));
+  const displayedColumns = api?.getAllDisplayedColumns?.();
+  const columns = displayedColumns
+    ? displayedColumns.filter((column) => column?.getColDef?.()?.field)
+    : columnDefs
+        .filter((column) => column.field)
+        .map((column) => ({
+          getColDef: () => column,
+          getColId: () => column.colId ?? column.field,
+        }));
+  const normalize = (value) => String(value ?? '').trim().toLowerCase();
+  const columnsByHeader = new Map();
+  const columnsByField = new Map();
+  columns.forEach((column) => {
+    const definition = column.getColDef();
+    columnsByField.set(definition.field, column);
+    [definition.headerName, definition.field, column.getColId?.()].forEach(
+      (header) => {
+        if (header) columnsByHeader.set(normalize(header), definition.field);
+      },
+    );
+  });
+  const headerFields = matrix[0].map((header) =>
+    columnsByHeader.get(normalize(header)),
+  );
+  const hasHeaders = headerFields.some(Boolean);
+  const pastedValues = hasHeaders ? matrix[1] ?? [] : matrix[0];
+  const startIndex = columns.findIndex(
+    (column) => column.getColDef().field === field,
+  );
+  const targetFields = hasHeaders
+    ? headerFields
+    : columns
+        .slice(startIndex, startIndex + pastedValues.length)
+        .map((column) => column.getColDef().field);
+  const changes = {};
+  pastedValues.forEach((raw, index) => {
+    const target = targetFields[index];
+    const column = columnsByField.get(target);
+    if (
+      !column ||
+      INLINE_ROW_SYSTEM_FIELDS.has(target) ||
+      column.getColDef().context?.calculated
+    ) {
+      return;
+    }
+    const definition = column.getColDef();
+    if (
+      typeof definition.editable === 'function' &&
+      !definition.editable({ data: { ...values, INSERTED: 'Y' } })
+    ) {
+      return;
+    }
+    if (definition.editable === false) return;
+    let parsed = raw;
+    if (definition.valueParser) {
+      parsed = definition.valueParser({ newValue: raw, data: values });
+    } else if (definition.type === 'numericColumn' && raw !== '') {
+      parsed = Number(raw);
+    }
+    if (typeof parsed === 'number' && !Number.isFinite(parsed)) return;
+    changes[target] = parsed;
+  });
+  return changes;
+}
+
 export default function ForecastPage() {
   const { templateName = '' } = useParams();
   const decodedName = decodeURIComponent(templateName);
@@ -95,15 +258,25 @@ export default function ForecastPage() {
   const activeRequestsRef = useRef(0);
   const pendingQueriesRef = useRef(new Map());
   const nextPastedRowIdRef = useRef(-1);
+  const nextInlineRowIdRef = useRef(-100000000);
   const recentEditsRef = useRef(new Map());
   const dirtyRowsRef = useRef(new Map());
   const [isGridLoading, setIsGridLoading] = useState(false);
   const [isMetadataLoading, setIsMetadataLoading] = useState(true);
   const [totalRowCount, setTotalRowCount] = useState(0);
   const [dirtyMap, setDirtyMap] = useState(() => new Map());
+  const [inlineRowValues, setInlineRowValues] = useState([]);
+  const [inlineRowRevision, setInlineRowRevision] = useState(0);
+  const inlineRowValuesRef = useRef([]);
+  const isInlineRowOpen = inlineRowValues.length > 0;
   const [rowDialogSeed, setRowDialogSeed] = useState(null);
   const [isAddRowOpen, setIsAddRowOpen] = useState(false);
   const dirtyRows = [...dirtyMap.values()];
+  const pendingSaveCount = dirtyRows.length + inlineRowValues.length;
+  const inlineRowsComplete = useMemo(
+    () => inlineRowValues.every(hasRequiredInlineFields),
+    [inlineRowValues, inlineRowRevision],
+  );
   const [metadata, setMetadata] = useState(null);
   const [message, setMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -177,6 +350,10 @@ export default function ForecastPage() {
       resizable: true,
       floatingFilter: false,
       suppressHeaderMenuButton: false,
+      cellRendererSelector: (params) =>
+        params.node.rowPinned === 'top'
+          ? { component: InlineForecastCell }
+          : undefined,
     }),
     [],
   );
@@ -196,8 +373,16 @@ export default function ForecastPage() {
     );
     setDirtyMap((current) => new Map(current).set(row.UNIQ_ID, changed));
   }, []);
+  const updateInlineRows = useCallback((update) => {
+    const nextRows = typeof update === 'function'
+      ? update(inlineRowValuesRef.current)
+      : update;
+    inlineRowValuesRef.current = nextRows;
+    setInlineRowValues(nextRows);
+  }, []);
   const closeTransientUi = useCallback(() => {
     setIsAddRowOpen(false);
+    updateInlineRows([]);
     setRowDialogSeed(null);
     setIsBulkUpdateOpen(false);
     setIsFormulaOpen(false);
@@ -210,7 +395,7 @@ export default function ForecastPage() {
       .forEach((details) => {
         details.open = false;
       });
-  }, []);
+  }, [updateInlineRows]);
   const trackGridRequest = (delta) => {
     activeRequestsRef.current = Math.max(0, activeRequestsRef.current + delta);
     setIsGridLoading(activeRequestsRef.current > 0);
@@ -367,7 +552,8 @@ export default function ForecastPage() {
     }
   }, [columnDefs, decodedName, isMetadataLoading]);
   const handleCellValueChanged = useCallback(
-    ({ data, colDef }) => {
+    ({ data, colDef, node }) => {
+      if (node?.rowPinned || data?.__INLINE_NEW_ROW) return;
       closeTransientUi();
       const editedFields = new Set(data.__editedFields ?? []);
       if (colDef?.field) editedFields.add(colDef.field);
@@ -521,6 +707,68 @@ export default function ForecastPage() {
     setMessage(notice);
     prioritizeLatestUpdates();
   };
+  const openInlineRow = () => {
+    const inlineId = nextInlineRowIdRef.current--;
+    const row = {
+      TEMPLATE_NAME: decodedName,
+      VERSION: metadata?.version ?? '10+2',
+      CURRENCY: 'USD',
+      STATUS: 'Working',
+      INSERTED: 'Y',
+      __INLINE_NEW_ROW: true,
+      __INLINE_NEW_ROW_ID: inlineId,
+    };
+    REQUIRED_NEW_ROW_FIELDS.forEach((field) => {
+      row[field] = '';
+    });
+    columnDefs.forEach((column) => {
+      if (column.field && !(column.field in row)) row[column.field] = '';
+    });
+    updateInlineRows((current) => [...current, row]);
+    setMessage('Enter values in the new top row(s). Use Save when all required fields are complete.');
+  };
+  const handleInlineRowChange = useCallback((inlineId, field, value) => {
+    const row = inlineRowValuesRef.current.find(
+      (candidate) => candidate.__INLINE_NEW_ROW_ID === inlineId,
+    );
+    if (!row) return;
+    row[field] = value;
+    setInlineRowRevision((revision) => revision + 1);
+  }, []);
+  const removeInlineRow = useCallback((inlineId) => {
+    updateInlineRows((current) =>
+      current.filter((row) => row.__INLINE_NEW_ROW_ID !== inlineId),
+    );
+  }, [updateInlineRows]);
+  const handleInlineRowPaste = useCallback(({ inlineId, text, field, api, node }) => {
+    const rowValues = inlineRowValuesRef.current.find(
+      (row) => row.__INLINE_NEW_ROW_ID === inlineId,
+    );
+    if (!rowValues) return;
+    const changes = mapInlinePaste({
+      text,
+      field,
+      api,
+      columnDefs,
+      values: rowValues,
+    });
+    if (Object.keys(changes).length) {
+      Object.assign(rowValues, changes);
+      const changedColumns = Object.keys(changes).filter(
+        (target) => target !== field,
+      );
+      if (changedColumns.length && node) {
+        api?.refreshCells?.({
+          rowNodes: [node],
+          columns: changedColumns,
+          force: true,
+        });
+      }
+      setInlineRowRevision((revision) => revision + 1);
+      setMessage('Pasted spreadsheet cells into the new first row.');
+    }
+    return changes;
+  }, [columnDefs]);
   const applyBulkUpdate = useCallback(
     async (field, value) => {
       if (isSaving || !totalRowCount) return;
@@ -680,7 +928,24 @@ export default function ForecastPage() {
 
   const save = async () => {
     gridRef.current?.api.stopEditing?.();
-    const rowsToSave = [...dirtyRowsRef.current.values()];
+    let inlineRowsToSave = [];
+    try {
+      inlineRowsToSave = inlineRowValues.map((values) =>
+        buildInlineRowPayload({
+          values,
+          columns: columnDefs,
+          templateName: decodedName,
+          version: metadata?.version ?? '10+2',
+          formula,
+          calculateNov: compiledFormula,
+          formulaPending,
+        }),
+      );
+    } catch (error) {
+      setMessage(error.message);
+      return;
+    }
+    const rowsToSave = [...dirtyRowsRef.current.values(), ...inlineRowsToSave];
     if (!rowsToSave.length || isSaving) return;
     if (formula && !compiledFormula) {
       setMessage('The NOV formula is invalid or references unavailable fields. Edit or remove it before saving.');
@@ -939,6 +1204,15 @@ export default function ForecastPage() {
   let formulaStatus = 'Calculated values were saved. Reapply and save the formula to update newly added rows.';
   if (dirtyRows.length) formulaStatus = 'Save pending row edits to update their calculated NOV values.';
   if (formulaPending) formulaStatus = 'Formula changes alone do not enable Save. Saving an edited row will also update NOV for every row in this template, including filtered and unloaded rows.';
+  const inlineRowContext = useMemo(
+    () => ({
+      onInlineRowChange: handleInlineRowChange,
+      onInlineRowPaste: handleInlineRowPaste,
+      onRemoveInlineRow: removeInlineRow,
+      isInlineRowSaving: isSaving,
+    }),
+    [handleInlineRowChange, handleInlineRowPaste, isSaving, removeInlineRow],
+  );
   return (
     <div
       className="forecast-dashboard forecast-detail-dashboard"
@@ -1096,13 +1370,16 @@ export default function ForecastPage() {
           </button>
           <button
             className="primary"
-            disabled={!dirtyRows.length || isSaving || Boolean(formula && !compiledFormula)}
+            disabled={
+              (!dirtyRows.length && !inlineRowValues.length) ||
+              !inlineRowsComplete ||
+              isSaving ||
+              Boolean(formula && !compiledFormula)
+            }
             onClick={save}
             type="button"
           >
-            {isSaving
-              ? 'Saving…'
-              : `Save${dirtyRows.length ? ` (${dirtyRows.length})` : ''}`}
+            {isSaving ? 'Saving…' : `Save${pendingSaveCount ? ` (${pendingSaveCount})` : ''}`}
           </button>
           <button
             className="submit-forecast-button"
@@ -1205,6 +1482,14 @@ export default function ForecastPage() {
                   </button>
                   <button
                     className="insert-row-button"
+                    disabled={isSaving}
+                    onClick={openInlineRow}
+                    type="button"
+                  >
+                    <span aria-hidden="true">＋</span> Add New Row
+                  </button>
+                  <button
+                    className="insert-row-button"
                     onClick={() => setIsAddRowOpen(true)}
                     type="button"
                   >
@@ -1277,6 +1562,12 @@ export default function ForecastPage() {
                   : columnDefs
               }
               defaultColDef={defaultColDef}
+              context={inlineRowContext}
+              pinnedTopRowData={
+                activeLayoutView !== 'summary' && isInlineRowOpen && inlineRowValues
+                  ? inlineRowValues
+                  : []
+              }
               rowModelType="infinite"
               datasource={
                 activeLayoutView === 'summary' ? summaryDatasource : datasource
@@ -1287,10 +1578,12 @@ export default function ForecastPage() {
               maxConcurrentDatasourceRequests={2}
               infiniteInitialRowCount={PAGE_SIZE}
               getRowId={({ data }) =>
-                String(
-                  data.UNIQ_ID ??
-                    `${data.FSI_ACCOUNT ?? ''}:${data.GEOGRAPHY ?? ''}`,
-                )
+                data.__INLINE_NEW_ROW
+                  ? `inline-new-forecast-row-${data.__INLINE_NEW_ROW_ID}`
+                  : String(
+                      data.UNIQ_ID ??
+                        `${data.FSI_ACCOUNT ?? ''}:${data.GEOGRAPHY ?? ''}`,
+                    )
               }
               rowClassRules={{
                 'recently-updated-row': ({ data }) =>

@@ -1137,6 +1137,47 @@ main {
   font-size: 11px;
   white-space: nowrap;
 }
+.grid .ag-row-pinned,
+.grid .ag-floating-top .ag-row {
+  background: #f2f6ff;
+  border-bottom: 2px solid #7e94e8;
+}
+.inline-new-row-label {
+  color: #465da9;
+  font-size: 11px;
+}
+.inline-new-row-cell {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+.grid .inline-new-row-remove {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+  border: 0;
+  color: #68728c;
+  background: transparent;
+  line-height: 1;
+}
+.inline-grid-cell-input {
+  width: calc(100% - 6px);
+  height: 30px;
+  margin: 3px;
+  padding: 3px 6px;
+  border: 1px solid #b8c5f3;
+  border-radius: 4px;
+  background: #fff;
+  color: #303747;
+  font: inherit;
+  font-size: 11px;
+}
+.inline-grid-cell-input:focus {
+  border-color: var(--primary);
+  outline: 2px solid rgba(75, 105, 220, 0.18);
+}
 .more-actions-menu {
   display: grid;
   gap: 3px;
