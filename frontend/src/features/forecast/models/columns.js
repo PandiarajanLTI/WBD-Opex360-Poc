@@ -62,7 +62,9 @@ export function createForecastColumns(apiColumns = [], novFormula = null) {
     pinned: isLockedLeft(field) ? 'left' : null,
     lockPinned: isLockedLeft(field),
     suppressMovable: isLockedLeft(field),
-    editable: ({ data }) => data?.INSERTED === 'Y' || field === 'NOTES',
+    editable: ({ data }) =>
+      !['TEMPLATE_NAME', 'VERSION'].includes(field) &&
+      (data?.INSERTED === 'Y' || field === 'NOTES'),
     filter: 'agTextColumnFilter',
     minWidth: field === 'NOTES' ? 220 : 130,
     cellClassRules: {
@@ -136,7 +138,13 @@ export function createForecastColumns(apiColumns = [], novFormula = null) {
         suppressMovable: isLockedLeft(field),
         editable: ({ data }) => data?.INSERTED === 'Y',
         filter: isNumeric ? 'agNumberColumnFilter' : 'agTextColumnFilter',
-        ...(isNumeric ? { type: 'numericColumn' } : {}),
+        ...(isNumeric
+          ? {
+              type: 'numericColumn',
+              valueParser: ({ newValue }) =>
+                newValue === '' ? null : Number(newValue),
+            }
+          : {}),
         minWidth: 140,
         cellClassRules: {
           'recently-edited-cell': ({ data }) =>

@@ -10,6 +10,7 @@ import {
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ForecastPage from './ForecastPage';
+import InlineForecastCell from '../components/InlineForecastCell';
 
 const { grid, getMetadata, queryRows, querySummaryRows, saveRows } = vi.hoisted(() => ({
   grid: vi.fn(() => null),
@@ -81,7 +82,7 @@ describe('forecast column visibility', () => {
     expect(api.setFilterModel).toHaveBeenCalledWith({ BRAND: { filter: 'A' } });
     expect(localStorage.getItem('opex360:nov-formula:Warner Media')).toBe('OCT_FORECAST * 2');
     expect(screen.getByRole('status').textContent).toContain('Formula changes alone do not enable Save');
-    expect(screen.getByRole('button', { name: 'Save' }).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Save (1)' }).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit NOV formula' }));
     fireEvent.click(screen.getByRole('button', { name: 'Remove formula' }));
@@ -710,5 +711,204 @@ describe('forecast column visibility', () => {
     expect(
       screen.queryByRole('heading', { name: 'Add forecast row' }),
     ).toBeNull();
+  });
+
+  it('adds multiple editable table rows without requests and saves them together', async () => {
+    const props = await renderPage();
+    const purgeInfiniteCache = vi.fn();
+    props.onGridReady({
+      api: { purgeInfiniteCache, applyColumnState: vi.fn() },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add New Row' }));
+    let gridProps = grid.mock.lastCall[0];
+    expect(gridProps.pinnedTopRowData).toHaveLength(1);
+    expect(
+      gridProps.defaultColDef.cellRendererSelector({ node: { rowPinned: 'top' } })
+        .component,
+    ).toBe(InlineForecastCell);
+    expect(gridProps.pinnedTopRowData[0]).toMatchObject({
+      __INLINE_NEW_ROW: true,
+      COMPANY_CODE: '',
+      BRAND: '',
+    });
+    expect(screen.getByRole('button', { name: 'Save (1)' }).disabled).toBe(true);
+    expect(queryRows).not.toHaveBeenCalled();
+    expect(saveRows).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add New Row' }));
+    gridProps = grid.mock.lastCall[0];
+    expect(gridProps.pinnedTopRowData).toHaveLength(2);
+    expect(
+      gridProps.pinnedTopRowData.map((row) =>
+        gridProps.getRowId({ data: row }),
+      ),
+    ).toEqual([
+      'inline-new-forecast-row--100000000',
+      'inline-new-forecast-row--100000001',
+    ]);
+
+    const pinnedRows = gridProps.pinnedTopRowData;
+    const firstInlineId = pinnedRows[0].__INLINE_NEW_ROW_ID;
+    act(() =>
+      gridProps.context.onInlineRowChange(
+        firstInlineId,
+        'COMPANY_CODE',
+        'US01',
+      ),
+    );
+    gridProps = grid.mock.lastCall[0];
+    expect(gridProps.pinnedTopRowData).toBe(pinnedRows);
+    expect(gridProps.pinnedTopRowData[0].COMPANY_CODE).toBe('US01');
+    act(() =>
+      gridProps.onCellValueChanged({
+        data: pinnedRows[0],
+        colDef: { field: 'COMPANY_CODE' },
+        node: { rowPinned: 'top' },
+      }),
+    );
+    expect(grid.mock.lastCall[0].pinnedTopRowData).toBe(pinnedRows);
+
+    act(() =>
+      gridProps.context.onInlineRowPaste({
+        inlineId: gridProps.pinnedTopRowData[0].__INLINE_NEW_ROW_ID,
+        field: 'COMPANY_CODE',
+        text: 'Company Code\tProfit Center\tCost Center\tFSI Account\tGeography\tBrand\tCurrency\tJAN\nUS02\tP002\tC002\tA002\tEMEA\tStudio B\tUSD\t45',
+      }),
+    );
+    act(() =>
+      gridProps.context.onInlineRowPaste({
+        inlineId: gridProps.pinnedTopRowData[1].__INLINE_NEW_ROW_ID,
+        field: 'COMPANY_CODE',
+        text: 'Company Code\tProfit Center\tCost Center\tFSI Account\tGeography\tBrand\tCurrency\tJAN\nUS03\tP003\tC003\tA003\tNA\tStudio C\tUSD\t55',
+      }),
+    );
+    gridProps = grid.mock.lastCall[0];
+    expect(gridProps.pinnedTopRowData[0]).toMatchObject({
+      COMPANY_CODE: 'US02',
+      PROFIT_CENTER: 'P002',
+      COST_CENTER: 'C002',
+      FSI_ACCOUNT: 'A002',
+      GEOGRAPHY: 'EMEA',
+      BRAND: 'Studio B',
+      CURRENCY: 'USD',
+      JAN_FORECAST: 45,
+    });
+    expect(gridProps.pinnedTopRowData[1]).toMatchObject({
+      COMPANY_CODE: 'US03',
+      JAN_FORECAST: 55,
+    });
+    expect(screen.getByRole('button', { name: 'Save (2)' }).disabled).toBe(false);
+
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    saveRows.mockResolvedValueOnce({ saved: 2, message: 'Inserted 2 row(s).' });
+    await act(async () =>
+      fireEvent.click(screen.getByRole('button', { name: 'Save (2)' })),
+    );
+    expect(saveRows).toHaveBeenCalledWith('Warner Media', [
+      expect.objectContaining({
+        UNIQ_ID: expect.any(Number),
+        TEMPLATE_NAME: 'Warner Media',
+        VERSION: '10+2',
+        CURRENCY: 'USD',
+        STATUS: 'Working',
+        COMPANY_CODE: 'US02',
+        JAN_FORECAST: 45,
+      }),
+      expect.objectContaining({
+        UNIQ_ID: expect.any(Number),
+        TEMPLATE_NAME: 'Warner Media',
+        COMPANY_CODE: 'US03',
+        JAN_FORECAST: 55,
+      }),
+    ]);
+    expect(queryRows).not.toHaveBeenCalled();
+    expect(purgeInfiniteCache).toHaveBeenCalledOnce();
+    expect(grid.mock.lastCall[0].pinnedTopRowData).toEqual([]);
+  });
+
+  it('keeps the new-row inputs open when pasting into an existing grid cell', async () => {
+    let props = await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Add New Row' }));
+    props = grid.mock.lastCall[0];
+
+    const notesColumn = {
+      getColDef: () => ({ field: 'NOTES' }),
+      getColId: () => 'NOTES',
+      isCellEditable: () => true,
+    };
+    const janColumn = {
+      getColDef: () => ({ field: 'JAN_FORECAST' }),
+      getColId: () => 'JAN_FORECAST',
+      isCellEditable: () => true,
+    };
+    const node = {
+      data: { UNIQ_ID: 1, NOTES: 'Before paste', __editedFields: [] },
+      setDataValue: (field, value) => {
+        node.data[field] = value;
+        props.onCellValueChanged({
+          data: node.data,
+          colDef: { field },
+          node,
+        });
+      },
+    };
+    const api = {
+      getFocusedCell: () => ({ rowIndex: 0, column: notesColumn }),
+      getAllDisplayedColumns: () => [notesColumn, janColumn],
+      getDisplayedRowAtIndex: () => node,
+      refreshCells: vi.fn(),
+    };
+    act(() => props.onGridReady({ api }));
+
+    await act(async () => {
+      fireEvent.paste(document.querySelector('.ag-theme-quartz.grid'), {
+        clipboardData: { getData: () => 'Pasted from Excel' },
+      });
+    });
+
+    expect(node.data.NOTES).toBe('Pasted from Excel');
+    expect(grid.mock.lastCall[0].pinnedTopRowData).toHaveLength(1);
+  });
+
+  it('keeps the new-row inputs open when Excel paste inserts headered rows', async () => {
+    const props = await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Add New Row' }));
+    const columns = [
+      {
+        getColId: () => 'COMPANY_CODE',
+        getColDef: () => ({ field: 'COMPANY_CODE', headerName: 'Company Code' }),
+      },
+      {
+        getColId: () => 'DEC_FORECAST',
+        getColDef: () => ({
+          field: 'DEC_FORECAST',
+          headerName: 'DEC',
+          valueParser: ({ newValue }) => Number(newValue),
+        }),
+      },
+    ];
+    props.onGridReady({
+      api: {
+        applyColumnState: vi.fn(),
+        getColumnState: () => [],
+        getAllDisplayedColumns: () => columns,
+      },
+    });
+    saveRows.mockResolvedValueOnce({ saved: 1, message: 'Inserted 1 row(s).' });
+
+    await act(async () => {
+      fireEvent.paste(document.querySelector('.ag-theme-quartz.grid'), {
+        clipboardData: {
+          getData: () => 'Company Code\tDEC\nUS02\t75',
+        },
+      });
+    });
+
+    expect(saveRows).toHaveBeenCalledWith(
+      'Warner Media',
+      [expect.objectContaining({ COMPANY_CODE: 'US02', DEC_FORECAST: 75 })],
+    );
+    expect(grid.mock.lastCall[0].pinnedTopRowData).toHaveLength(1);
   });
 });

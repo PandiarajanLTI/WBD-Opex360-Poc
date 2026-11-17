@@ -71,6 +71,7 @@ export function copyRowsToClipboard(
 const IMMUTABLE_COLUMNS = new Set([
   'UNIQ_ID',
   'TEMPLATE_NAME',
+  'VERSION',
   'FY_WORKING_FORECAST',
   'COSTCENTER',
 ]);
@@ -101,6 +102,8 @@ export function createRowsFromFullRowPaste(
       UNIQ_ID: createId(),
       TEMPLATE_NAME: templateName,
       VERSION: version,
+      CURRENCY: 'USD',
+      STATUS: 'Working',
       INSERTED: 'Y',
       __editedFields: [],
       __editedAt: Date.now(),
@@ -152,6 +155,8 @@ export function createRowsFromHeaderPaste(
       UNIQ_ID: createId(),
       TEMPLATE_NAME: templateName,
       VERSION: version,
+      CURRENCY: 'USD',
+      STATUS: 'Working',
       INSERTED: 'Y',
       __editedFields: [],
       __editedAt: Date.now(),
