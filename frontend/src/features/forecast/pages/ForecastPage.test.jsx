@@ -826,4 +826,89 @@ describe('forecast column visibility', () => {
     expect(purgeInfiniteCache).toHaveBeenCalledOnce();
     expect(grid.mock.lastCall[0].pinnedTopRowData).toEqual([]);
   });
+
+  it('keeps the new-row inputs open when pasting into an existing grid cell', async () => {
+    let props = await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Add New Row' }));
+    props = grid.mock.lastCall[0];
+
+    const notesColumn = {
+      getColDef: () => ({ field: 'NOTES' }),
+      getColId: () => 'NOTES',
+      isCellEditable: () => true,
+    };
+    const janColumn = {
+      getColDef: () => ({ field: 'JAN_FORECAST' }),
+      getColId: () => 'JAN_FORECAST',
+      isCellEditable: () => true,
+    };
+    const node = {
+      data: { UNIQ_ID: 1, NOTES: 'Before paste', __editedFields: [] },
+      setDataValue: (field, value) => {
+        node.data[field] = value;
+        props.onCellValueChanged({
+          data: node.data,
+          colDef: { field },
+          node,
+        });
+      },
+    };
+    const api = {
+      getFocusedCell: () => ({ rowIndex: 0, column: notesColumn }),
+      getAllDisplayedColumns: () => [notesColumn, janColumn],
+      getDisplayedRowAtIndex: () => node,
+      refreshCells: vi.fn(),
+    };
+    act(() => props.onGridReady({ api }));
+
+    await act(async () => {
+      fireEvent.paste(document.querySelector('.ag-theme-quartz.grid'), {
+        clipboardData: { getData: () => 'Pasted from Excel' },
+      });
+    });
+
+    expect(node.data.NOTES).toBe('Pasted from Excel');
+    expect(grid.mock.lastCall[0].pinnedTopRowData).toHaveLength(1);
+  });
+
+  it('keeps the new-row inputs open when Excel paste inserts headered rows', async () => {
+    const props = await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Add New Row' }));
+    const columns = [
+      {
+        getColId: () => 'COMPANY_CODE',
+        getColDef: () => ({ field: 'COMPANY_CODE', headerName: 'Company Code' }),
+      },
+      {
+        getColId: () => 'DEC_FORECAST',
+        getColDef: () => ({
+          field: 'DEC_FORECAST',
+          headerName: 'DEC',
+          valueParser: ({ newValue }) => Number(newValue),
+        }),
+      },
+    ];
+    props.onGridReady({
+      api: {
+        applyColumnState: vi.fn(),
+        getColumnState: () => [],
+        getAllDisplayedColumns: () => columns,
+      },
+    });
+    saveRows.mockResolvedValueOnce({ saved: 1, message: 'Inserted 1 row(s).' });
+
+    await act(async () => {
+      fireEvent.paste(document.querySelector('.ag-theme-quartz.grid'), {
+        clipboardData: {
+          getData: () => 'Company Code\tDEC\nUS02\t75',
+        },
+      });
+    });
+
+    expect(saveRows).toHaveBeenCalledWith(
+      'Warner Media',
+      [expect.objectContaining({ COMPANY_CODE: 'US02', DEC_FORECAST: 75 })],
+    );
+    expect(grid.mock.lastCall[0].pinnedTopRowData).toHaveLength(1);
+  });
 });

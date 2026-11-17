@@ -90,11 +90,7 @@ export default function InlineForecastCell(params) {
       onChange={(event) => {
         const nextValue = event.target.value;
         setValue(nextValue);
-        context.onInlineRowChange?.(
-          data.__INLINE_NEW_ROW_ID,
-          field,
-          nextValue,
-        );
+        context.onInlineRowChange?.(data.__INLINE_NEW_ROW_ID, field, nextValue);
       }}
       onKeyDownCapture={(event) => event.stopPropagation()}
       onPaste={handlePaste}

@@ -10,6 +10,7 @@ import NovFormulaDialog from '../components/NovFormulaDialog';
 import { createForecastColumns, MONTH_COLUMNS } from '../models/columns';
 import { compileForecastFormula } from '../utils/formula';
 import { buildNovFormulaPayload, calculateDirtyNovRows } from '../utils/saveNovFormula';
+import { mapInlinePaste } from '../utils/inlinePaste';
 import SelectAllRowsHeader from '../../shared/SelectAllRowsHeader';
 import { forecastService } from '../services/forecastService';
 import {
@@ -179,77 +180,6 @@ function buildInlineRowPayload({
   return row;
 }
 
-function mapInlinePaste({ text, field, api, columnDefs, values }) {
-  const matrix = String(text ?? '')
-    .replace(/\r\n?/g, '\n')
-    .replace(/\n$/, '')
-    .split('\n')
-    .map((line) => line.split('\t'));
-  const displayedColumns = api?.getAllDisplayedColumns?.();
-  const columns = displayedColumns
-    ? displayedColumns.filter((column) => column?.getColDef?.()?.field)
-    : columnDefs
-        .filter((column) => column.field)
-        .map((column) => ({
-          getColDef: () => column,
-          getColId: () => column.colId ?? column.field,
-        }));
-  const normalize = (value) => String(value ?? '').trim().toLowerCase();
-  const columnsByHeader = new Map();
-  const columnsByField = new Map();
-  columns.forEach((column) => {
-    const definition = column.getColDef();
-    columnsByField.set(definition.field, column);
-    [definition.headerName, definition.field, column.getColId?.()].forEach(
-      (header) => {
-        if (header) columnsByHeader.set(normalize(header), definition.field);
-      },
-    );
-  });
-  const headerFields = matrix[0].map((header) =>
-    columnsByHeader.get(normalize(header)),
-  );
-  const hasHeaders = headerFields.some(Boolean);
-  const pastedValues = hasHeaders ? matrix[1] ?? [] : matrix[0];
-  const startIndex = columns.findIndex(
-    (column) => column.getColDef().field === field,
-  );
-  const targetFields = hasHeaders
-    ? headerFields
-    : columns
-        .slice(startIndex, startIndex + pastedValues.length)
-        .map((column) => column.getColDef().field);
-  const changes = {};
-  pastedValues.forEach((raw, index) => {
-    const target = targetFields[index];
-    const column = columnsByField.get(target);
-    if (
-      !column ||
-      INLINE_ROW_SYSTEM_FIELDS.has(target) ||
-      column.getColDef().context?.calculated
-    ) {
-      return;
-    }
-    const definition = column.getColDef();
-    if (
-      typeof definition.editable === 'function' &&
-      !definition.editable({ data: { ...values, INSERTED: 'Y' } })
-    ) {
-      return;
-    }
-    if (definition.editable === false) return;
-    let parsed = raw;
-    if (definition.valueParser) {
-      parsed = definition.valueParser({ newValue: raw, data: values });
-    } else if (definition.type === 'numericColumn' && raw !== '') {
-      parsed = Number(raw);
-    }
-    if (typeof parsed === 'number' && !Number.isFinite(parsed)) return;
-    changes[target] = parsed;
-  });
-  return changes;
-}
-
 export default function ForecastPage() {
   const { templateName = '' } = useParams();
   const decodedName = decodeURIComponent(templateName);
@@ -259,6 +189,7 @@ export default function ForecastPage() {
   const pendingQueriesRef = useRef(new Map());
   const nextPastedRowIdRef = useRef(-1);
   const nextInlineRowIdRef = useRef(-100000000);
+  const gridPasteInProgressRef = useRef(false);
   const recentEditsRef = useRef(new Map());
   const dirtyRowsRef = useRef(new Map());
   const [isGridLoading, setIsGridLoading] = useState(false);
@@ -273,10 +204,7 @@ export default function ForecastPage() {
   const [isAddRowOpen, setIsAddRowOpen] = useState(false);
   const dirtyRows = [...dirtyMap.values()];
   const pendingSaveCount = dirtyRows.length + inlineRowValues.length;
-  const inlineRowsComplete = useMemo(
-    () => inlineRowValues.every(hasRequiredInlineFields),
-    [inlineRowValues, inlineRowRevision],
-  );
+  const inlineRowsComplete = inlineRowValues.every(hasRequiredInlineFields);
   const [metadata, setMetadata] = useState(null);
   const [message, setMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -380,9 +308,9 @@ export default function ForecastPage() {
     inlineRowValuesRef.current = nextRows;
     setInlineRowValues(nextRows);
   }, []);
-  const closeTransientUi = useCallback(() => {
+  const closeTransientUi = useCallback(({ preserveInlineRows = false } = {}) => {
     setIsAddRowOpen(false);
-    updateInlineRows([]);
+    if (!preserveInlineRows) updateInlineRows([]);
     setRowDialogSeed(null);
     setIsBulkUpdateOpen(false);
     setIsFormulaOpen(false);
@@ -554,7 +482,7 @@ export default function ForecastPage() {
   const handleCellValueChanged = useCallback(
     ({ data, colDef, node }) => {
       if (node?.rowPinned || data?.__INLINE_NEW_ROW) return;
-      closeTransientUi();
+      if (!gridPasteInProgressRef.current) closeTransientUi();
       const editedFields = new Set(data.__editedFields ?? []);
       if (colDef?.field) editedFields.add(colDef.field);
       data.__editedFields = [...editedFields];
@@ -1053,7 +981,7 @@ export default function ForecastPage() {
       setMessage('Nothing to paste. Copy one or more forecast data rows.');
       return;
     }
-    closeTransientUi();
+    closeTransientUi({ preserveInlineRows: true });
     setIsSaving(true);
     trackGridRequest(1);
     try {
@@ -1103,9 +1031,15 @@ export default function ForecastPage() {
       await savePastedRows(newRows);
       return;
     }
-    const changed = applyPasteToGrid(api, matrix, {
-      allowFullRowPaste: activeLayoutView !== 'summary',
-    });
+    let changed;
+    gridPasteInProgressRef.current = true;
+    try {
+      changed = applyPasteToGrid(api, matrix, {
+        allowFullRowPaste: activeLayoutView !== 'summary',
+      });
+    } finally {
+      gridPasteInProgressRef.current = false;
+    }
     const emptyPasteMessage =
       activeLayoutView === 'summary'
         ? 'Nothing pasted. Switch to a detail view to paste forecast rows.'
@@ -1115,7 +1049,6 @@ export default function ForecastPage() {
         ? `Pasted into ${changed.length} row(s). Save to persist the changes.`
         : emptyPasteMessage,
     );
-      if (changed.length) closeTransientUi();
   };
   const handlePaste = async (event) => {
     if (['INPUT', 'TEXTAREA'].includes(event.target?.tagName)) return;
