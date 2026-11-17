@@ -11,6 +11,7 @@ import { compileForecastFormula } from '../utils/formula';
 import { buildNovFormulaPayload, calculateDirtyNovRows } from '../utils/saveNovFormula';
 import SelectAllRowsHeader from '../../shared/SelectAllRowsHeader';
 import { forecastService } from '../services/forecastService';
+import { createCachedDatasource } from '../../shared/cachedDatasource';
 import {
   limitPinnedDescriptorColumns,
   loadColumnState,
@@ -26,10 +27,10 @@ import {
   isFullRowPaste,
   parseClipboardText,
 } from '../../shared/clipboard';
-const PAGE_SIZE = 200;
+const PAGE_SIZE = 1000;
 const CACHE_BLOCK_SIZE = PAGE_SIZE;
-const BULK_PAGE_SIZE = 500;
-const BULK_SAVE_BATCH_SIZE = 500;
+const BULK_PAGE_SIZE = 2000;
+const BULK_SAVE_BATCH_SIZE = 200;
 const BULK_CONCURRENCY = 3;
 const BULK_FIELDS_WITHOUT_NOV = [
   { field: 'DEC_FORECAST', label: 'December Forecast', type: 'number' },
@@ -231,42 +232,35 @@ export default function ForecastPage() {
     });
     api.purgeInfiniteCache?.();
   };
-  const datasource = useMemo(
-    () => ({
+  const datasource = useMemo(() => {
+    const cache = createCachedDatasource({
+      maxEntries: 100,
+      query: (request) => forecastService.queryRows(decodedName, request),
+      mapRows: (rows) => decorateRows(rows, 'UNIQ_ID'),
+      getDirtyRow: (row) => dirtyRowsRef.current.get(row.UNIQ_ID),
+    });
+
+    return {
       getRows: async (params) => {
-        trackGridRequest(1);
         const request = {
           startRow: params.startRow,
           endRow: params.endRow,
           sortModel: params.sortModel,
           filterModel: params.filterModel,
         };
-        const requestKey = JSON.stringify(['detail', decodedName, request]);
-        let pending = pendingQueriesRef.current.get(requestKey);
         try {
-          if (!pending) {
-            pending = forecastService.queryRows(decodedName, request);
-            pendingQueriesRef.current.set(requestKey, pending);
-          }
-          const result = await pending;
+          const result = await cache.get(request);
           setTotalRowCount(result.totalRowCount);
-          const visibleRows = decorateRows(result.rows, 'UNIQ_ID').map(
-            (row) => dirtyRowsRef.current.get(row.UNIQ_ID) ?? row,
-          );
-          params.successCallback(visibleRows, result.totalRowCount);
+          params.successCallback(result.rows, result.totalRowCount);
         } catch (requestError) {
           setMessage(requestError.message);
           params.failCallback();
-        } finally {
-          if (pendingQueriesRef.current.get(requestKey) === pending) {
-            pendingQueriesRef.current.delete(requestKey);
-          }
-          trackGridRequest(-1);
         }
       },
-    }),
-    [decodedName],
-  );
+      destroy: () => cache.clear(),
+    };
+  }, [decodedName]);
+
   const summaryDatasource = useMemo(
     () => ({
       getRows: async (params) => {
@@ -944,7 +938,7 @@ export default function ForecastPage() {
       className="forecast-dashboard forecast-detail-dashboard"
       ref={dashboardRef}
     >
-      {(isGridLoading || isMetadataLoading || isSaving || isExporting) && (
+      {(isMetadataLoading || isSaving || isExporting) && (
         <output className="api-loading-overlay" aria-live="polite">
           <span className="api-loading-card">
             <span className="loading-spinner" aria-hidden="true" />
@@ -1282,9 +1276,10 @@ export default function ForecastPage() {
                 activeLayoutView === 'summary' ? summaryDatasource : datasource
               }
               cacheBlockSize={CACHE_BLOCK_SIZE}
-              maxBlocksInCache={5}
-              cacheOverflowSize={20}
+              maxBlocksInCache={20}
+              cacheOverflowSize={100}
               maxConcurrentDatasourceRequests={2}
+              blockLoadDebounceMillis={120}
               infiniteInitialRowCount={PAGE_SIZE}
               getRowId={({ data }) =>
                 String(

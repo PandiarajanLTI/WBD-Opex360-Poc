@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     snowflake_network_timeout_seconds: int = Field(default=60, ge=5, le=600)
     snowflake_query_timeout_seconds: int = Field(default=60, ge=5, le=600)
     snowflake_query_tag: str = "wbd-opex360-fastapi"
-    max_page_size: int = Field(default=1000, ge=1, le=5000)
+    max_page_size: int = Field(default=2000, ge=1, le=5000)
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parents[2] / ".env",
