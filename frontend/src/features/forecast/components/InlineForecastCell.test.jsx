@@ -72,18 +72,40 @@ describe('InlineForecastCell', () => {
     const input = screen.getByLabelText('New row Company Code');
 
     fireEvent.paste(input, {
-      clipboardData: { getData: () => 'Company Code\tBrand\nUS02\tStudio A' },
+      clipboardData: { getData: () => 'US02\tStudio A' },
     });
 
     expect(onInlineRowPaste).toHaveBeenCalledWith(
       expect.objectContaining({
         inlineId: -100000000,
         field: 'COMPANY_CODE',
-        text: 'Company Code\tBrand\nUS02\tStudio A',
+        text: 'US02\tStudio A',
         node,
       }),
     );
     expect(input.value).toBe('US02');
+  });
+
+  it('delegates multiline Excel paste to the multi-row handler', () => {
+    const onInlineRowsPaste = vi.fn();
+    render(
+      <InlineForecastCell
+        colDef={{ field: 'COMPANY_CODE', headerName: 'Company Code', editable: true }}
+        context={{ onInlineRowsPaste }}
+        data={{
+          __INLINE_NEW_ROW_ID: -100000000,
+          __INLINE_NEW_ROW: true,
+          COMPANY_CODE: '',
+          INSERTED: 'Y',
+        }}
+      />,
+    );
+    fireEvent.paste(screen.getByLabelText('New row Company Code'), {
+      clipboardData: { getData: () => 'Company Code\nUS01\nUS02' },
+    });
+    expect(onInlineRowsPaste).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Company Code\nUS01\nUS02' }),
+    );
   });
 
   it('disables fields outside the allowed left-side and NOV/DEC set', () => {
