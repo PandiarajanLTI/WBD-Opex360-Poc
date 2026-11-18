@@ -85,4 +85,46 @@ describe('InlineForecastCell', () => {
     );
     expect(input.value).toBe('US02');
   });
+
+  it('disables fields outside the allowed left-side and NOV/DEC set', () => {
+    const { rerender } = render(
+      <InlineForecastCell
+        colDef={{
+          field: 'JAN_FORECAST',
+          headerName: 'JAN',
+          type: 'numericColumn',
+          editable: ({ data }) => !data?.__INLINE_NEW_ROW,
+          context: { columnType: 'month' },
+        }}
+        context={{}}
+        data={{
+          __INLINE_NEW_ROW_ID: -100000000,
+          __INLINE_NEW_ROW: true,
+          JAN_FORECAST: '',
+          INSERTED: 'Y',
+        }}
+      />,
+    );
+    expect(screen.queryByLabelText('New row JAN')).toBeNull();
+
+    rerender(
+      <InlineForecastCell
+        colDef={{
+          field: 'DEC_FORECAST',
+          headerName: 'DEC',
+          type: 'numericColumn',
+          editable: true,
+          context: { columnType: 'month' },
+        }}
+        context={{}}
+        data={{
+          __INLINE_NEW_ROW_ID: -100000000,
+          __INLINE_NEW_ROW: true,
+          DEC_FORECAST: '',
+          INSERTED: 'Y',
+        }}
+      />,
+    );
+    expect(screen.getByLabelText('New row DEC').type).toBe('number');
+  });
 });

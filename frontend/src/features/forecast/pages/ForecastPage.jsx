@@ -634,7 +634,7 @@ export default function ForecastPage() {
     const row = {
       TEMPLATE_NAME: decodedName,
       VERSION: metadata?.version ?? '10+2',
-      CURRENCY: 'USD',
+      CURRENCY: '',
       STATUS: 'Working',
       INSERTED: 'Y',
       __INLINE_NEW_ROW: true,

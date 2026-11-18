@@ -1,3 +1,5 @@
+import { isInlineNewRowEditable } from '../models/columns';
+
 const INLINE_ROW_READ_ONLY_FIELDS = new Set([
   'UNIQ_ID',
   'ID',
@@ -54,7 +56,7 @@ export function mapInlinePaste({ text, field, api, columnDefs, values }) {
     const target = definition.field;
     if (
       INLINE_ROW_READ_ONLY_FIELDS.has(target) ||
-      definition.context?.calculated
+      !isInlineNewRowEditable(definition)
     ) {
       return false;
     }

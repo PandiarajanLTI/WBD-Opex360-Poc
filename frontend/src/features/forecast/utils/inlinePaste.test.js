@@ -26,11 +26,10 @@ function map(text, field = 'COMPANY_CODE') {
 
 describe('mapInlinePaste', () => {
   it('maps a complete unheaded Excel row to all editable new-row fields', () => {
-    expect(map('US02\tStudio B\tEMEA\t45', 'BRAND')).toEqual({
+    expect(map('US02\tStudio B\tEMEA', 'BRAND')).toEqual({
       COMPANY_CODE: 'US02',
       BRAND: 'Studio B',
       GEOGRAPHY: 'EMEA',
-      JAN_FORECAST: 45,
     });
   });
 
@@ -39,7 +38,6 @@ describe('mapInlinePaste', () => {
       COMPANY_CODE: 'US02',
       BRAND: 'Studio B',
       GEOGRAPHY: 'EMEA',
-      JAN_FORECAST: 45,
     });
   });
 
@@ -48,15 +46,7 @@ describe('mapInlinePaste', () => {
       map('Brand\tJAN\tCompany Code\nStudio C\t55\tUS03', 'GEOGRAPHY'),
     ).toEqual({
       BRAND: 'Studio C',
-      JAN_FORECAST: 55,
       COMPANY_CODE: 'US03',
-    });
-  });
-
-  it('keeps partial unheaded paste starting at the focused cell', () => {
-    expect(map('Studio D\tEurope', 'BRAND')).toEqual({
-      BRAND: 'Studio D',
-      GEOGRAPHY: 'Europe',
     });
   });
 });

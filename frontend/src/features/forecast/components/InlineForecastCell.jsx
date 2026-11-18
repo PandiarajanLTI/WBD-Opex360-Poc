@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { isInlineNewRowEditable } from '../models/columns';
 
 const REQUIRED_INLINE_FIELDS = new Set([
   'COMPANY_CODE',
@@ -34,7 +35,7 @@ export default function InlineForecastCell(params) {
   let editable =
     Boolean(field) &&
     !READ_ONLY_INLINE_FIELDS.has(field) &&
-    !colDef.context?.calculated;
+    isInlineNewRowEditable(colDef);
   if (editable && typeof colDef.editable === 'function') {
     editable = colDef.editable({ ...params, data, node });
   } else if (editable && colDef.editable !== undefined) {
@@ -62,7 +63,9 @@ export default function InlineForecastCell(params) {
     );
   }
   if (field === 'VERSION') return <span>{data.VERSION}</span>;
-  if (!editable) return null;
+
+  const isSystemField = READ_ONLY_INLINE_FIELDS.has(field);
+  if (isSystemField || !field || !editable) return null;
 
   const handlePaste = (event) => {
     event.stopPropagation();
@@ -86,7 +89,7 @@ export default function InlineForecastCell(params) {
     <input
       aria-label={`New row ${label}`}
       className="inline-grid-cell-input"
-      disabled={context.isInlineRowSaving}
+      disabled={context.isInlineRowSaving || !editable}
       onChange={(event) => {
         const nextValue = event.target.value;
         setValue(nextValue);
