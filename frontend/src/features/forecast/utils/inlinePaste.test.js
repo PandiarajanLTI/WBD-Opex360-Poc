@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapInlinePaste } from './inlinePaste';
+import { mapInlinePaste, mapInlinePasteRows } from './inlinePaste';
 
 const columns = [
   { field: 'TEMPLATE_NAME', headerName: 'Template' },
@@ -48,5 +48,19 @@ describe('mapInlinePaste', () => {
       BRAND: 'Studio C',
       COMPANY_CODE: 'US03',
     });
+  });
+
+  it('maps multiple spreadsheet rows from the focused editable column', () => {
+    expect(
+      mapInlinePasteRows({
+        text: 'US02\tStudio B\r\nUS03\tStudio C',
+        field: 'COMPANY_CODE',
+        columnDefs: columns,
+        values,
+      }),
+    ).toEqual([
+      { COMPANY_CODE: 'US02', BRAND: 'Studio B' },
+      { COMPANY_CODE: 'US03', BRAND: 'Studio C' },
+    ]);
   });
 });

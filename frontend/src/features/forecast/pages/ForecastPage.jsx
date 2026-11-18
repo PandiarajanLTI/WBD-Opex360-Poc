@@ -10,7 +10,7 @@ import NovFormulaDialog from '../components/NovFormulaDialog';
 import { createForecastColumns, MONTH_COLUMNS } from '../models/columns';
 import { compileForecastFormula } from '../utils/formula';
 import { buildNovFormulaPayload, calculateDirtyNovRows } from '../utils/saveNovFormula';
-import { mapInlinePaste } from '../utils/inlinePaste';
+import { mapInlinePaste, mapInlinePasteRows } from '../utils/inlinePaste';
 import SelectAllRowsHeader from '../../shared/SelectAllRowsHeader';
 import { forecastService } from '../services/forecastService';
 import { createCachedDatasource } from '../../shared/cachedDatasource';
@@ -691,6 +691,82 @@ export default function ForecastPage() {
     }
     return changes;
   }, [columnDefs]);
+  const handleInlineRowsPaste = useCallback(({ text, inlineId, api, field }) => {
+    const matrix = parseClipboardText(text);
+    const pastedRows = createRowsFromHeaderPaste(api, matrix, {
+      templateName: decodedName,
+      version: metadata?.version ?? '10+2',
+      createId: () => nextInlineRowIdRef.current--,
+    }) ?? createRowsFromFullRowPaste(api, matrix, {
+      templateName: decodedName,
+      version: metadata?.version ?? '10+2',
+      createId: () => nextInlineRowIdRef.current--,
+    });
+    let mappedRows = pastedRows.length
+      ? pastedRows.map((row) => ({
+          ...row,
+          __INLINE_NEW_ROW: true,
+          __INLINE_NEW_ROW_ID: row.UNIQ_ID,
+        }))
+      : [];
+    if (!mappedRows.length && matrix.length > 1) {
+      const seed = inlineRowValuesRef.current.find(
+        (row) => row.__INLINE_NEW_ROW_ID === inlineId,
+      );
+      const mappedChanges = mapInlinePasteRows({
+        text,
+        field,
+        api,
+        columnDefs,
+        values: seed,
+      });
+      mappedRows = mappedChanges
+        .filter((changes) => Object.keys(changes).length)
+        .map((changes) => {
+          const rowId = nextInlineRowIdRef.current--;
+          return {
+            TEMPLATE_NAME: decodedName,
+            VERSION: metadata?.version ?? '10+2',
+            CURRENCY: '',
+            STATUS: 'Working',
+            INSERTED: 'Y',
+            __INLINE_NEW_ROW: true,
+            __INLINE_NEW_ROW_ID: rowId,
+            UNIQ_ID: rowId,
+            ...changes,
+          };
+        });
+    }
+    if (!mappedRows.length) {
+      setMessage('Paste a headered Excel range, a complete multi-column range, or select editable cells in an added row.');
+      return;
+    }
+    updateInlineRows((current) => {
+      const anchorIndex = current.findIndex(
+        (row) => row.__INLINE_NEW_ROW_ID === inlineId,
+      );
+      const pasteIndex = anchorIndex >= 0 ? anchorIndex : current.length;
+      const before = current.slice(0, pasteIndex);
+      const availableRows = current.slice(pasteIndex);
+      const pastedIntoRows = mappedRows.map((pastedRow, index) => {
+        const existingRow = availableRows[index];
+        if (!existingRow) return pastedRow;
+        return {
+          ...existingRow,
+          ...pastedRow,
+          UNIQ_ID: existingRow.UNIQ_ID,
+          __INLINE_NEW_ROW: true,
+          __INLINE_NEW_ROW_ID: existingRow.__INLINE_NEW_ROW_ID,
+        };
+      });
+      return [
+        ...before,
+        ...pastedIntoRows,
+        ...availableRows.slice(mappedRows.length),
+      ];
+    });
+    setMessage(`Added ${mappedRows.length} pasted row(s). Complete required fields, then Save.`);
+  }, [columnDefs, decodedName, metadata?.version, updateInlineRows]);
   const applyBulkUpdate = useCallback(
     async (field, value) => {
       if (isSaving || !totalRowCount) return;
@@ -1045,10 +1121,16 @@ export default function ForecastPage() {
     );
   };
   const handlePaste = async (event) => {
-    if (['INPUT', 'TEXTAREA'].includes(event.target?.tagName)) return;
+    const text = event.clipboardData.getData('text');
+    const isMultiline = /\r?\n/.test(text.replace(/\r?\n$/, ''));
+    if (['INPUT', 'TEXTAREA'].includes(event.target?.tagName)) {
+      if (!isMultiline) return;
+      event.preventDefault();
+      event.stopPropagation();
+    }
     if (!gridRef.current?.api) return;
     event.preventDefault();
-    await handlePasteText(event.clipboardData.getData('text'));
+    await handlePasteText(text);
   };
   const handleGridContextMenu = (event) => {
     event.preventDefault();
@@ -1135,10 +1217,11 @@ export default function ForecastPage() {
     () => ({
       onInlineRowChange: handleInlineRowChange,
       onInlineRowPaste: handleInlineRowPaste,
+      onInlineRowsPaste: handleInlineRowsPaste,
       onRemoveInlineRow: removeInlineRow,
       isInlineRowSaving: isSaving,
     }),
-    [handleInlineRowChange, handleInlineRowPaste, isSaving, removeInlineRow],
+    [handleInlineRowChange, handleInlineRowPaste, handleInlineRowsPaste, isSaving, removeInlineRow, formulaFields],
   );
   return (
     <div

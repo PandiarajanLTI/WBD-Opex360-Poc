@@ -904,15 +904,85 @@ describe('forecast column visibility', () => {
     await act(async () => {
       fireEvent.paste(document.querySelector('.ag-theme-quartz.grid'), {
         clipboardData: {
-          getData: () => 'Company Code\tDEC\nUS02\t75',
+          getData: () => 'Company Code\tDEC\nUS02\t75\nUS03\t80',
         },
       });
     });
 
     expect(saveRows).toHaveBeenCalledWith(
       'Warner Media',
-      [expect.objectContaining({ COMPANY_CODE: 'US02', DEC_FORECAST: 75 })],
+      [
+        expect.objectContaining({ COMPANY_CODE: 'US02', DEC_FORECAST: 75 }),
+        expect.objectContaining({ COMPANY_CODE: 'US03', DEC_FORECAST: 80 }),
+      ],
     );
     expect(grid.mock.lastCall[0].pinnedTopRowData).toHaveLength(1);
+  });
+
+  it('adds two inline rows from a multiline partial spreadsheet paste', async () => {
+    const props = await renderPage();
+    const columns = [
+      'COMPANY_CODE',
+      'BRAND',
+    ].map((field) => ({
+      getColId: () => field,
+      getColDef: () => ({
+        field,
+        headerName: field === 'COMPANY_CODE' ? 'Company Code' : 'Brand',
+        editable: true,
+      }),
+    }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add New Row' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add New Row' }));
+    props.onGridReady({
+      api: {
+        applyColumnState: vi.fn(),
+        getColumnState: () => [],
+        getAllDisplayedColumns: () => columns,
+      },
+    });
+    const inlineProps = grid.mock.lastCall[0];
+    const existingIds = inlineProps.pinnedTopRowData.map(
+      (row) => row.__INLINE_NEW_ROW_ID,
+    );
+
+    act(() =>
+      inlineProps.context.onInlineRowsPaste({
+        inlineId: existingIds[0],
+        field: 'COMPANY_CODE',
+        text: 'US02\tStudio B\r\nUS03\tStudio C',
+        api: { getAllDisplayedColumns: () => columns },
+      }),
+    );
+
+    const pastedRows = grid.mock.lastCall[0].pinnedTopRowData;
+    expect(pastedRows).toHaveLength(2);
+    expect(pastedRows.map((row) => row.__INLINE_NEW_ROW_ID)).toEqual(existingIds);
+    expect(pastedRows).toEqual([
+      expect.objectContaining({ COMPANY_CODE: 'US02', BRAND: 'Studio B' }),
+      expect.objectContaining({ COMPANY_CODE: 'US03', BRAND: 'Studio C' }),
+    ]);
+  });
+
+  it('appends only overflow rows during multiline paste', async () => {
+    const props = await renderPage();
+    const columns = ['COMPANY_CODE', 'BRAND'].map((field) => ({
+      getColId: () => field,
+      getColDef: () => ({ field, headerName: field, editable: true }),
+    }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add New Row' }));
+    const inlineProps = grid.mock.lastCall[0];
+    props.onGridReady({ api: { getAllDisplayedColumns: () => columns } });
+
+    act(() =>
+      inlineProps.context.onInlineRowsPaste({
+        inlineId: inlineProps.pinnedTopRowData[0].__INLINE_NEW_ROW_ID,
+        field: 'COMPANY_CODE',
+        text: 'US02\tStudio B\r\nUS03\tStudio C',
+        api: { getAllDisplayedColumns: () => columns },
+      }),
+    );
+
+    expect(grid.mock.lastCall[0].pinnedTopRowData).toHaveLength(2);
   });
 });

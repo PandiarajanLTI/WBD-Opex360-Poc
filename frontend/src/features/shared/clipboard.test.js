@@ -325,3 +325,40 @@ it('treats a full forecast row paste as a new inserted record', () => {
     }),
   ]);
 });
+
+it('creates multiple inserted rows from a multiline Excel paste', () => {
+  const columns = [
+    {
+      getColId: () => 'COMPANY_CODE',
+      getColDef: () => ({ field: 'COMPANY_CODE', headerName: 'Company Code' }),
+    },
+    {
+      getColId: () => 'DEC_FORECAST',
+      getColDef: () => ({
+        field: 'DEC_FORECAST',
+        headerName: 'DEC',
+        valueParser: ({ newValue }) => Number(newValue),
+      }),
+    },
+  ];
+  let nextId = -1;
+  const rows = createRowsFromHeaderPaste(
+    { getAllDisplayedColumns: () => columns },
+    parseClipboardText('Company Code\tDEC\r\nUS01\t100\r\nUS02\t200'),
+    {
+      templateName: 'Warner Media',
+      version: '10+2',
+      createId: () => nextId--,
+    },
+  );
+
+  expect(rows).toHaveLength(2);
+  expect(rows.map(({ UNIQ_ID, COMPANY_CODE, DEC_FORECAST }) => ({
+    UNIQ_ID,
+    COMPANY_CODE,
+    DEC_FORECAST,
+  }))).toEqual([
+    { UNIQ_ID: -1, COMPANY_CODE: 'US01', DEC_FORECAST: 100 },
+    { UNIQ_ID: -2, COMPANY_CODE: 'US02', DEC_FORECAST: 200 },
+  ]);
+});

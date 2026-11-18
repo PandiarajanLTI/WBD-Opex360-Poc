@@ -110,3 +110,21 @@ export function mapInlinePaste({ text, field, api, columnDefs, values }) {
   });
   return changes;
 }
+
+export function mapInlinePasteRows({ text, field, api, columnDefs, values }) {
+  const matrix = String(text ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n$/, '')
+    .split('\n')
+    .map((line) => line.split('\t'));
+  const normalizedValues = values ?? {};
+  return matrix.map((cells) =>
+    mapInlinePaste({
+      text: cells.join('\t'),
+      field,
+      api,
+      columnDefs,
+      values: normalizedValues,
+    }),
+  );
+}

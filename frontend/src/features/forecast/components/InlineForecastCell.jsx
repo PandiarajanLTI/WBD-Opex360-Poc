@@ -68,9 +68,21 @@ export default function InlineForecastCell(params) {
   if (isSystemField || !field || !editable) return null;
 
   const handlePaste = (event) => {
-    event.stopPropagation();
     const text = event.clipboardData?.getData('text');
-    if (!text || (!text.includes('\t') && !text.includes('\n'))) return;
+    if (!text) return;
+    if (/\r?\n/.test(text.replace(/\r?\n$/, ''))) {
+      event.preventDefault();
+      event.stopPropagation();
+      context.onInlineRowsPaste?.({
+        inlineId: data.__INLINE_NEW_ROW_ID,
+        text,
+        field,
+        api: params.api,
+      });
+      return;
+    }
+    event.stopPropagation();
+    if (!text.includes('\t')) return;
     event.preventDefault();
     const changes = context.onInlineRowPaste?.({
       event,
