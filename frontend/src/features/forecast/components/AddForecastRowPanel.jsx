@@ -8,6 +8,7 @@ const REQUIRED_FIELDS = [
   ['FSI_ACCOUNT', 'FSI account'],
   ['GEOGRAPHY', 'Geography'],
   ['BRAND', 'Brand'],
+  ['CURRENCY', 'Currency'],
 ];
 
 export default function AddForecastRowPanel({
@@ -19,7 +20,6 @@ export default function AddForecastRowPanel({
 }) {
   const [values, setValues] = useState(() => ({
     ...Object.fromEntries(REQUIRED_FIELDS.map(([field]) => [field, ''])),
-    CURRENCY: 'USD',
     STATUS: 'Working',
     NOTES: '',
     NOV_FORECAST: '0',
@@ -46,7 +46,7 @@ export default function AddForecastRowPanel({
       COMPANY_CODE: values.COMPANY_CODE,
       COST_CENTER: values.COST_CENTER,
       PROFIT_CENTER: values.PROFIT_CENTER,
-      CURRENCY: values.CURRENCY || 'USD',
+      CURRENCY: values.CURRENCY.trim(),
       STATUS: values.STATUS || 'Working',
       NOV_FORECAST: Number(values.NOV_FORECAST || 0),
       DEC_FORECAST: Number(values.DEC_FORECAST || 0),

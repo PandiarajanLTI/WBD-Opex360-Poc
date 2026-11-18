@@ -773,14 +773,14 @@ describe('forecast column visibility', () => {
       gridProps.context.onInlineRowPaste({
         inlineId: gridProps.pinnedTopRowData[0].__INLINE_NEW_ROW_ID,
         field: 'COMPANY_CODE',
-        text: 'Company Code\tProfit Center\tCost Center\tFSI Account\tGeography\tBrand\tCurrency\tJAN\nUS02\tP002\tC002\tA002\tEMEA\tStudio B\tUSD\t45',
+        text: 'Company Code\tProfit Center\tCost Center\tFSI Account\tGeography\tBrand\tCurrency\tJAN\tNOV\tDEC\nUS02\tP002\tC002\tA002\tEMEA\tStudio B\tUSD\t45\t125\t130',
       }),
     );
     act(() =>
       gridProps.context.onInlineRowPaste({
         inlineId: gridProps.pinnedTopRowData[1].__INLINE_NEW_ROW_ID,
         field: 'COMPANY_CODE',
-        text: 'Company Code\tProfit Center\tCost Center\tFSI Account\tGeography\tBrand\tCurrency\tJAN\nUS03\tP003\tC003\tA003\tNA\tStudio C\tUSD\t55',
+        text: 'Company Code\tProfit Center\tCost Center\tFSI Account\tGeography\tBrand\tCurrency\tJAN\tNOV\tDEC\nUS03\tP003\tC003\tA003\tNA\tStudio C\tUSD\t55\t225\t230',
       }),
     );
     gridProps = grid.mock.lastCall[0];
@@ -792,11 +792,13 @@ describe('forecast column visibility', () => {
       GEOGRAPHY: 'EMEA',
       BRAND: 'Studio B',
       CURRENCY: 'USD',
-      JAN_FORECAST: 45,
+      NOV_FORECAST: 125,
+      DEC_FORECAST: 130,
     });
     expect(gridProps.pinnedTopRowData[1]).toMatchObject({
       COMPANY_CODE: 'US03',
-      JAN_FORECAST: 55,
+      NOV_FORECAST: 225,
+      DEC_FORECAST: 230,
     });
     expect(screen.getByRole('button', { name: 'Save (2)' }).disabled).toBe(false);
 
@@ -813,13 +815,15 @@ describe('forecast column visibility', () => {
         CURRENCY: 'USD',
         STATUS: 'Working',
         COMPANY_CODE: 'US02',
-        JAN_FORECAST: 45,
+        NOV_FORECAST: 125,
+        DEC_FORECAST: 130,
       }),
       expect.objectContaining({
         UNIQ_ID: expect.any(Number),
         TEMPLATE_NAME: 'Warner Media',
         COMPANY_CODE: 'US03',
-        JAN_FORECAST: 55,
+        NOV_FORECAST: 225,
+        DEC_FORECAST: 230,
       }),
     ]);
     expect(queryRows).not.toHaveBeenCalled();

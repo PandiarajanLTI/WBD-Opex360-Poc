@@ -20,6 +20,14 @@ const LOCKED_LEFT_COLUMNS = new Set([
 
 export const isLockedLeft = (field) => LOCKED_LEFT_COLUMNS.has(field);
 
+export const isInlineNewRowEditable = (column) => {
+  const field = column?.field;
+  if (!field || ['TEMPLATE_NAME', 'VERSION'].includes(field)) return false;
+  return (
+    isLockedLeft(field) || ['NOV_FORECAST', 'DEC_FORECAST'].includes(field)
+  ) && !column.context?.calculated;
+};
+
 export const DESCRIPTOR_COLUMNS = [
   ['TEMPLATE_NAME', 'Template'],
   ['VERSION', 'Version'],
@@ -64,7 +72,9 @@ export function createForecastColumns(apiColumns = [], novFormula = null) {
     suppressMovable: isLockedLeft(field),
     editable: ({ data }) =>
       !['TEMPLATE_NAME', 'VERSION'].includes(field) &&
-      (data?.INSERTED === 'Y' || field === 'NOTES'),
+      (data?.__INLINE_NEW_ROW
+        ? isLockedLeft(field)
+        : data?.INSERTED === 'Y' || field === 'NOTES'),
     filter: 'agTextColumnFilter',
     minWidth: field === 'NOTES' ? 220 : 130,
     cellClassRules: {
@@ -79,7 +89,9 @@ export function createForecastColumns(apiColumns = [], novFormula = null) {
     colId: `${month}_FORECAST`,
     editable: ({ data }) =>
       !(month === 'NOV' && novFormula) &&
-      (data?.INSERTED === 'Y' || ['NOV', 'DEC'].includes(month)),
+      (data?.__INLINE_NEW_ROW
+        ? ['NOV', 'DEC'].includes(month)
+        : data?.INSERTED === 'Y' || ['NOV', 'DEC'].includes(month)),
     filter: month === 'NOV' && novFormula ? false : 'agNumberColumnFilter',
     ...(month === 'NOV' && novFormula
       ? {
@@ -136,7 +148,10 @@ export function createForecastColumns(apiColumns = [], novFormula = null) {
         pinned: null,
         lockPinned: isLockedLeft(field),
         suppressMovable: isLockedLeft(field),
-        editable: ({ data }) => data?.INSERTED === 'Y',
+        editable: ({ data }) =>
+          data?.__INLINE_NEW_ROW
+            ? isLockedLeft(field)
+            : data?.INSERTED === 'Y',
         filter: isNumeric ? 'agNumberColumnFilter' : 'agTextColumnFilter',
         ...(isNumeric
           ? {
