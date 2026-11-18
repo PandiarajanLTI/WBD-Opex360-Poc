@@ -29,10 +29,10 @@ import {
   isFullRowPaste,
   parseClipboardText,
 } from '../../shared/clipboard';
-const PAGE_SIZE = 1000;
+const PAGE_SIZE = 500;
 const CACHE_BLOCK_SIZE = PAGE_SIZE;
-const BULK_PAGE_SIZE = 2000;
-const BULK_SAVE_BATCH_SIZE = 200;
+const BULK_PAGE_SIZE = 500;
+const BULK_SAVE_BATCH_SIZE = 500;
 const BULK_CONCURRENCY = 3;
 const BULK_FIELDS_WITHOUT_NOV = [
   { field: 'DEC_FORECAST', label: 'December Forecast', type: 'number' },
@@ -347,7 +347,7 @@ export default function ForecastPage() {
   };
   const datasource = useMemo(() => {
     const cache = createCachedDatasource({
-      maxEntries: 100,
+      maxEntries: 60,
       query: (request) => forecastService.queryRows(decodedName, request),
       mapRows: (rows) => decorateRows(rows, 'UNIQ_ID'),
       getDirtyRow: (row) => dirtyRowsRef.current.get(row.UNIQ_ID),
@@ -355,6 +355,7 @@ export default function ForecastPage() {
 
     return {
       getRows: async (params) => {
+        trackGridRequest(1);
         const request = {
           startRow: params.startRow,
           endRow: params.endRow,
@@ -363,11 +364,22 @@ export default function ForecastPage() {
         };
         try {
           const result = await cache.get(request);
+          const loadedEndRow = request.startRow + result.rows.length;
+          const requestedRowCount = request.endRow - request.startRow;
+          const reachedLastRow =
+            result.rows.length < requestedRowCount ||
+            loadedEndRow >= result.totalRowCount;
+
           setTotalRowCount(result.totalRowCount);
-          params.successCallback(result.rows, result.totalRowCount);
+          params.successCallback(
+            result.rows,
+            reachedLastRow ? result.totalRowCount : undefined,
+          );
         } catch (requestError) {
           setMessage(requestError.message);
           params.failCallback();
+        } finally {
+          trackGridRequest(-1);
         }
       },
       destroy: () => cache.clear(),
@@ -634,7 +646,7 @@ export default function ForecastPage() {
     const row = {
       TEMPLATE_NAME: decodedName,
       VERSION: metadata?.version ?? '10+2',
-      CURRENCY: '',
+      CURRENCY: 'USD',
       STATUS: 'Working',
       INSERTED: 'Y',
       __INLINE_NEW_ROW: true,
@@ -1228,7 +1240,7 @@ export default function ForecastPage() {
       className="forecast-dashboard forecast-detail-dashboard"
       ref={dashboardRef}
     >
-      {(isMetadataLoading || isSaving || isExporting) && (
+      {(isMetadataLoading || isGridLoading || isSaving || isExporting) && (
         <output className="api-loading-overlay" aria-live="polite">
           <span className="api-loading-card">
             <span className="loading-spinner" aria-hidden="true" />
@@ -1236,7 +1248,9 @@ export default function ForecastPage() {
               ? 'Saving forecast…'
               : isExporting
                 ? 'Preparing forecast download…'
-                : 'Loading forecast data…'}
+                : isGridLoading
+                  ? 'Loading more forecast data…'
+                  : 'Loading forecast data…'}
           </span>
         </output>
       )}
@@ -1583,8 +1597,8 @@ export default function ForecastPage() {
                 activeLayoutView === 'summary' ? summaryDatasource : datasource
               }
               cacheBlockSize={CACHE_BLOCK_SIZE}
-              maxBlocksInCache={20}
-              cacheOverflowSize={100}
+              maxBlocksInCache={60}
+              cacheOverflowSize={1}
               maxConcurrentDatasourceRequests={2}
               blockLoadDebounceMillis={120}
               infiniteInitialRowCount={PAGE_SIZE}
