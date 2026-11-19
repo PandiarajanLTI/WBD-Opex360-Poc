@@ -29,10 +29,10 @@ import {
   isFullRowPaste,
   parseClipboardText,
 } from '../../shared/clipboard';
-const PAGE_SIZE = 500;
+const PAGE_SIZE = 300;
 const CACHE_BLOCK_SIZE = PAGE_SIZE;
-const BULK_PAGE_SIZE = 500;
-const BULK_SAVE_BATCH_SIZE = 500;
+const BULK_PAGE_SIZE = 300;
+const BULK_SAVE_BATCH_SIZE = 300;
 const BULK_CONCURRENCY = 3;
 const BULK_FIELDS_WITHOUT_NOV = [
   { field: 'DEC_FORECAST', label: 'December Forecast', type: 'number' },
@@ -193,6 +193,7 @@ export default function ForecastPage() {
   const gridPasteInProgressRef = useRef(false);
   const recentEditsRef = useRef(new Map());
   const dirtyRowsRef = useRef(new Map());
+  const fullyLoadedRowsRef = useRef(null);
   const [isGridLoading, setIsGridLoading] = useState(false);
   const [isMetadataLoading, setIsMetadataLoading] = useState(true);
   const [totalRowCount, setTotalRowCount] = useState(0);
@@ -347,7 +348,7 @@ export default function ForecastPage() {
   };
   const datasource = useMemo(() => {
     const cache = createCachedDatasource({
-      maxEntries: 60,
+      maxEntries: 400,
       query: (request) => forecastService.queryRows(decodedName, request),
       mapRows: (rows) => decorateRows(rows, 'UNIQ_ID'),
       getDirtyRow: (row) => dirtyRowsRef.current.get(row.UNIQ_ID),
@@ -363,7 +364,16 @@ export default function ForecastPage() {
           filterModel: params.filterModel,
         };
         try {
-          const result = await cache.get(request);
+          const hasSort = Boolean(request.sortModel?.length);
+          const hasFilter = Boolean(Object.keys(request.filterModel ?? {}).length);
+          const fullRows = fullyLoadedRowsRef.current;
+          const result =
+            fullRows && !hasSort && !hasFilter
+              ? {
+                  rows: fullRows.slice(request.startRow, request.endRow),
+                  totalRowCount: fullRows.length,
+                }
+              : await cache.get(request);
           const loadedEndRow = request.startRow + result.rows.length;
           const requestedRowCount = request.endRow - request.startRow;
           const reachedLastRow =
@@ -832,11 +842,14 @@ export default function ForecastPage() {
           );
         }
 
+        // Every record is already in memory after the bulk load. Keep that snapshot so
+        // scrolling does not request the same records again.
+        fullyLoadedRowsRef.current = payload;
         dirtyRowsRef.current = new Map();
         setDirtyMap(new Map());
         gridRef.current?.api.deselectAll?.();
         setSelectedCount(0);
-        prioritizeLatestUpdates();
+        gridRef.current?.api.refreshInfiniteCache?.();
         setMessage(
           `Bulk update completed. ${payload.length.toLocaleString()} records were updated in asynchronous batches.`,
         );
@@ -900,8 +913,18 @@ export default function ForecastPage() {
       uniqueRows.forEach((sourceRow) => {
         const existingRow = nextDirtyMap.get(sourceRow.UNIQ_ID);
         const row = existingRow ? { ...sourceRow, ...existingRow } : { ...sourceRow };
-        row.NOV_FORECAST = row.NOV_PRIOR_FORECAST;
-        row.DEC_FORECAST = row.DEC_PRIOR_FORECAST;
+        // Actual Snowflake schema: NOV_PRIORFORECAST / DEC_PRIORFORECAST.
+        // Read from sourceRow so an existing dirty edit cannot hide the source value.
+        const novPriorForecast =
+          sourceRow.NOV_PRIORFORECAST ??
+          sourceRow.NOV_PRIOR_FORECAST ??
+          sourceRow.NOV_PRIOR;
+        const decPriorForecast =
+          sourceRow.DEC_PRIORFORECAST ??
+          sourceRow.DEC_PRIOR_FORECAST ??
+          sourceRow.DEC_PRIOR;
+        row.NOV_FORECAST = novPriorForecast ?? null;
+        row.DEC_FORECAST = decPriorForecast ?? null;
         row.__editedFields = [
           ...new Set([
             ...(row.__editedFields ?? []),
@@ -913,8 +936,28 @@ export default function ForecastPage() {
         nextDirtyMap.set(row.UNIQ_ID, row);
       });
 
+      const rowsMissingPriorForecast = uniqueRows.filter(
+        (row) =>
+          row.NOV_PRIORFORECAST == null &&
+          row.NOV_PRIOR_FORECAST == null &&
+          row.NOV_PRIOR == null &&
+          row.DEC_PRIORFORECAST == null &&
+          row.DEC_PRIOR_FORECAST == null &&
+          row.DEC_PRIOR == null,
+      ).length;
+      if (rowsMissingPriorForecast === uniqueRows.length && uniqueRows.length) {
+        throw new Error(
+          'Prior forecast columns were not returned by the rows API. Expected NOV_PRIORFORECAST/DEC_PRIORFORECAST.',
+        );
+      }
+
       dirtyRowsRef.current = nextDirtyMap;
       setDirtyMap(new Map(nextDirtyMap));
+      // The action has already loaded every record. Reuse those rows locally so an
+      // AG Grid scroll does not go back to Snowflake/API for the same blocks.
+      fullyLoadedRowsRef.current = uniqueRows.map(
+        (row) => nextDirtyMap.get(row.UNIQ_ID) ?? row,
+      );
       gridRef.current?.api.refreshInfiniteCache?.();
       gridRef.current?.api.refreshCells?.({
         columns: ['NOV_FORECAST', 'DEC_FORECAST'],
@@ -1597,7 +1640,7 @@ export default function ForecastPage() {
                 activeLayoutView === 'summary' ? summaryDatasource : datasource
               }
               cacheBlockSize={CACHE_BLOCK_SIZE}
-              maxBlocksInCache={60}
+              maxBlocksInCache={400}
               cacheOverflowSize={1}
               maxConcurrentDatasourceRequests={2}
               blockLoadDebounceMillis={120}
