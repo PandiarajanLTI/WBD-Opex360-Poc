@@ -223,6 +223,12 @@ export default function ForecastPage() {
   const formulaPending = savedFormula.template === decodedName && savedFormula.pending;
 
   useEffect(() => {
+    if (!message) return undefined;
+    const timeoutId = window.setTimeout(() => setMessage(''), 3000);
+    return () => window.clearTimeout(timeoutId);
+  }, [message]);
+
+  useEffect(() => {
     if (!clipboardMenu) return undefined;
     const dismissMenu = (event) => {
       if (!event.target.closest?.('.forecast-clipboard-menu')) {
@@ -1516,6 +1522,7 @@ export default function ForecastPage() {
                     className="insert-row-button"
                     onClick={() => setIsAddRowOpen(true)}
                     type="button"
+                    style={{ display: 'none' }}
                   >
                     <span aria-hidden="true">＋</span> Insert Row
                   </button>
