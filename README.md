@@ -97,7 +97,11 @@ Browser → feature hooks/services → FastAPI routes → services → repositor
 ## Screens
 1. **Forecast landing**: template/version/status/KPI list and navigation.
 2. **Forecast template**: metadata, KPI cards, editable AG Grid, add row, duplicate, bulk actions, save, export, reset layout.
-3. **Budget maintenance**: schema-led editable/non-editable AG Grid view.
+3. **Budget Holder**: complete Budget Table schema; the 13 workbook-marked
+   editable fields support inline editing, bulk updates, Excel/TSV paste, and save.
+
+Forecast and Budget Holder grids use column-header filter menus without a separate
+floating filter row.
 
 Forecast and budget columns can be reordered, but dragging them outside the grid no longer
 hides them. Previously hidden Brand columns are restored when the template opens,

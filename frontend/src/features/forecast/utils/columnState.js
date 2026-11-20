@@ -1,11 +1,9 @@
+import { isLockedLeft } from '../models/columns';
+
 export function getDefaultColumnState(columnDefinitions) {
   return columnDefinitions.map((column, index) => ({
     colId: column.colId,
-    pinned:
-      column.context?.columnType === 'month' ||
-      column.context?.columnType === 'summary'
-        ? null
-        : 'left',
+    pinned: isLockedLeft(column.colId) ? 'left' : null,
     hide: false,
     sort: null,
     sortIndex: null,
@@ -27,10 +25,31 @@ export function normalizeMovedColumnState(
     column.colId === movedColumnId
       ? {
           ...column,
-          pinned: movedIndex >= monthStart ? null : (column.pinned ?? 'left'),
+          pinned: movedIndex >= monthStart ? null : (column.pinned ?? null),
         }
       : column,
   );
+}
+export function orderDescriptorColumnsFirst(state, columnDefinitions) {
+  const descriptors = columnDefinitions.filter(
+    (column) => column.context?.columnType === 'descriptor',
+  );
+  const descriptorIds = new Set(descriptors.map((column) => column.colId));
+  const savedById = new Map(state.map((column) => [column.colId, column]));
+  return [
+    ...descriptors.map((column) => ({
+      ...savedById.get(column.colId),
+      colId: column.colId,
+      ...(column.lockPinned ? { hide: false } : {}),
+    })),
+    ...state.filter((column) => !descriptorIds.has(column.colId)),
+  ];
+}
+export function limitPinnedDescriptorColumns(state) {
+  return state.map((column) => ({
+    ...column,
+    pinned: isLockedLeft(column.colId) ? 'left' : null,
+  }));
 }
 export function saveColumnState(templateName, state) {
   localStorage.setItem(

@@ -1,70 +1,483 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { AgGridReact } from 'ag-grid-react';
+import { Link, useParams } from 'react-router-dom';
+import ForecastGrid from '../components/ForecastGrid';
 import AddForecastRowPanel from '../components/AddForecastRowPanel';
+import InlineForecastCell from '../components/InlineForecastCell';
 import BulkUpdatePanel from '../components/BulkUpdatePanel';
+import CreateForecastViewPanel from '../components/CreateForecastViewPanel';
+import RequiredDimensionsDialog from '../components/RequiredDimensionsDialog';
+import NovFormulaDialog from '../components/NovFormulaDialog';
 import { createForecastColumns, MONTH_COLUMNS } from '../models/columns';
-import { forecastService } from '../services/forecastService';
+import { compileForecastFormula } from '../utils/formula';
+import { buildNovFormulaPayload, calculateDirtyNovRows } from '../utils/saveNovFormula';
+import { mapInlinePaste, mapInlinePasteRows } from '../utils/inlinePaste';
 import {
+  SELECTED_BULK_FIELDS,
+  SELECTED_BULK_FIELDS_WITHOUT_NOV,
+  applySelectedBulkValue,
+  buildSelectedBulkPayload,
+  chunkRows,
+  getSelectedForecastNodes,
+} from '../utils/selectedBulkUpdate';
+import SelectAllRowsHeader from '../../shared/SelectAllRowsHeader';
+import { forecastService } from '../services/forecastService';
+import { createCachedDatasource } from '../../shared/cachedDatasource';
+import {
+  limitPinnedDescriptorColumns,
   loadColumnState,
   normalizeMovedColumnState,
+  orderDescriptorColumnsFirst,
   saveColumnState,
 } from '../utils/columnState';
-import { applyPasteToGrid, parseClipboardText } from '../../shared/clipboard';
-const PAGE_SIZE = 100;
-const CACHE_BLOCK_SIZE = 200;
+import {
+  applyPasteToGrid,
+  createRowsFromHeaderPaste,
+  copyRowsToClipboard,
+  createRowsFromFullRowPaste,
+  isFullRowPaste,
+  parseClipboardText,
+} from '../../shared/clipboard';
+const PAGE_SIZE = 300;
+const CACHE_BLOCK_SIZE = PAGE_SIZE;
+const BULK_PAGE_SIZE = 1000;
+const BULK_SAVE_BATCH_SIZE = 300;
+const BULK_CONCURRENCY = 2;
+const BULK_RETRY_COUNT = 3;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const physicalRowKey = (row, occurrence = 0) =>
+  [
+    row.UNIQ_ID, row.ID, row.ALL_DIM_ID, row.TEMPLATE_PRIMARY_KEY, row.COMPANY_CODE,
+    row.COST_CENTER, row.PROFIT_CENTER, row.FSI_ACCOUNT, occurrence,
+  ].map((value) => String(value ?? '')).join('|');
+async function retryBulkRequest(request, attempts = BULK_RETRY_COUNT) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try { return await request(); } catch (error) {
+      lastError = error;
+      if (attempt + 1 < attempts) await sleep(500 * (2 ** attempt));
+    }
+  }
+  throw lastError;
+}
+function decoratePhysicalRows(rows) {
+  const seen = new Map();
+  return rows.map((row) => {
+    const base = physicalRowKey(row);
+    const occurrence = seen.get(base) ?? 0;
+    seen.set(base, occurrence + 1);
+    return { ...row, __physicalRowKey: physicalRowKey(row, occurrence) };
+  });
+}
+const BULK_FIELDS_WITHOUT_NOV = [
+  { field: 'DEC_FORECAST', label: 'December Forecast', type: 'number' },
+  { field: 'NOTES', label: 'Notes', type: 'text' },
+];
+const REQUIRED_NEW_ROW_FIELDS = [
+  'COMPANY_CODE',
+  'PROFIT_CENTER',
+  'COST_CENTER',
+  'FSI_ACCOUNT',
+  'GEOGRAPHY',
+  'BRAND',
+];
+const INLINE_ROW_SYSTEM_FIELDS = new Set([
+  'UNIQ_ID',
+  'ID',
+  'ALL_DIM_ID',
+  'TEMPLATE_PRIMARY_KEY',
+  'TEMPLATE_NAME',
+  'VERSION',
+  'UPDATED_TS',
+  'FY_WORKING_FORECAST',
+  'FY_WORKING_FORECAST_PRATE',
+  'FX_RATE',
+  'FX_RATE_TYPE',
+  'FX_YEAR',
+]);
+function hasRequiredInlineFields(values) {
+  return (
+    REQUIRED_NEW_ROW_FIELDS.every((field) =>
+      String(values?.[field] ?? '').trim(),
+    ) && String(values?.CURRENCY ?? '').trim()
+  );
+}
+function readNovFormula(template) {
+  try {
+    return localStorage.getItem(`opex360:nov-formula:${template}`) ?? '';
+  } catch {
+    return '';
+  }
+}
+function readFormulaPending(template) {
+  try {
+    return Boolean(readNovFormula(template)) && localStorage.getItem(`opex360:nov-formula-pending:${template}`) !== '0';
+  } catch {
+    return Boolean(readNovFormula(template));
+  }
+}
+const SUMMARY_COLUMN_DEFS = [
+  {
+    field: 'FSI_ACCOUNT',
+    colId: 'FSI_ACCOUNT',
+    headerName: 'FSI Account',
+    filter: false,
+    minWidth: 180,
+  },
+  {
+    field: 'GEOGRAPHY',
+    colId: 'GEOGRAPHY',
+    headerName: 'Region',
+    filter: false,
+    minWidth: 180,
+  },
+  {
+    field: 'FY_WORKING_FORECAST',
+    colId: 'FY_WORKING_FORECAST',
+    headerName: 'FY Forecast',
+    type: 'numericColumn',
+    filter: false,
+    valueFormatter: ({ value }) => currency.format(Number(value ?? 0)),
+    minWidth: 180,
+  },
+  {
+    field: 'ROW_COUNT',
+    colId: 'ROW_COUNT',
+    headerName: 'Records',
+    type: 'numericColumn',
+    filter: false,
+    minWidth: 130,
+  },
+];
+const currency = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  maximumFractionDigits: 0,
+});
+function buildInlineRowPayload({
+  values,
+  columns,
+  templateName,
+  version,
+  formula,
+  calculateNov,
+  formulaPending,
+}) {
+  const missing = REQUIRED_NEW_ROW_FIELDS.filter(
+    (field) => !String(values[field] ?? '').trim(),
+  );
+  if (missing.length || !String(values.CURRENCY ?? '').trim()) {
+    const required = [...missing, ...(!String(values.CURRENCY ?? '').trim() ? ['CURRENCY'] : [])];
+    throw new Error(`Complete required fields before saving: ${required.join(', ')}.`);
+  }
+  if (formula && !calculateNov) {
+    throw new Error('The NOV formula is invalid. Edit or remove it before saving a new row.');
+  }
+  const row = {
+    UNIQ_ID: values.__INLINE_NEW_ROW_ID,
+    TEMPLATE_NAME: templateName,
+    VERSION: version,
+    CURRENCY: String(values.CURRENCY).trim(),
+    STATUS: String(values.STATUS || 'Working').trim(),
+    INSERTED: 'Y',
+  };
+  columns.forEach((column) => {
+    const field = column.field;
+    const raw = values[field];
+    if (
+      !field ||
+      INLINE_ROW_SYSTEM_FIELDS.has(field) ||
+      column.context?.calculated ||
+      raw === undefined ||
+      raw === ''
+    ) {
+      return;
+    }
+    let value = raw;
+    if (column.valueParser) {
+      value = column.valueParser({ newValue: raw, data: values });
+    } else if (column.type === 'numericColumn') {
+      value = Number(raw);
+    }
+    if (typeof value === 'number' && !Number.isFinite(value)) {
+      throw new TypeError(`${column.headerName ?? field} must be a number.`);
+    }
+    row[field] = value;
+  });
+  if (calculateNov && !formulaPending) {
+    const nov = calculateNov(row);
+    if (nov === null || !Number.isFinite(nov)) {
+      throw new Error('NOV cannot be calculated. Check the formula inputs before saving.');
+    }
+    row.NOV_FORECAST = nov;
+  }
+  return row;
+}
 export default function ForecastPage() {
   const { templateName = '' } = useParams();
   const decodedName = decodeURIComponent(templateName);
   const gridRef = useRef(null);
+  const dashboardRef = useRef(null);
+  const activeRequestsRef = useRef(0);
+  const pendingQueriesRef = useRef(new Map());
+  const nextPastedRowIdRef = useRef(-1);
+  const nextInlineRowIdRef = useRef(-100000000);
+  const gridPasteInProgressRef = useRef(false);
+  const recentEditsRef = useRef(new Map());
   const dirtyRowsRef = useRef(new Map());
+  const fullyLoadedRowsRef = useRef(null);
+  const datasourceCacheRef = useRef(null);
+  const [isGridLoading, setIsGridLoading] = useState(false);
+  const [isMetadataLoading, setIsMetadataLoading] = useState(true);
   const [totalRowCount, setTotalRowCount] = useState(0);
   const [dirtyMap, setDirtyMap] = useState(() => new Map());
+  const [inlineRowValues, setInlineRowValues] = useState([]);
+  const [inlineRowRevision, setInlineRowRevision] = useState(0);
+  const inlineRowValuesRef = useRef([]);
+  const isInlineRowOpen = inlineRowValues.length > 0;
   const [rowDialogSeed, setRowDialogSeed] = useState(null);
   const [isAddRowOpen, setIsAddRowOpen] = useState(false);
   const dirtyRows = [...dirtyMap.values()];
+  const pendingSaveCount = dirtyRows.length + inlineRowValues.length;
+  const inlineRowsComplete = inlineRowValues.every(hasRequiredInlineFields);
   const [metadata, setMetadata] = useState(null);
   const [message, setMessage] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [selectedCount, setSelectedCount] = useState(0);
+  const [clipboardMenu, setClipboardMenu] = useState(null);
   const [isBulkUpdateOpen, setIsBulkUpdateOpen] = useState(false);
-  const columnDefs = useMemo(() => createForecastColumns(), []);
+  const [isBulkUpdateSelectedOpen, setIsBulkUpdateSelectedOpen] = useState(false);
+  const [isFormulaOpen, setIsFormulaOpen] = useState(false);
+  const [savedFormula, setSavedFormula] = useState(() => ({
+    template: decodedName,
+    value: readNovFormula(decodedName),
+    pending: readFormulaPending(decodedName),
+  }));
+  const formula = savedFormula.template === decodedName ? savedFormula.value : '';
+  const formulaPending = savedFormula.template === decodedName && savedFormula.pending;
+  useEffect(() => {
+    if (!message) return undefined;
+    const timeoutId = window.setTimeout(() => setMessage(''), 3000);
+    return () => window.clearTimeout(timeoutId);
+  }, [message]);
+  useEffect(() => {
+    if (!clipboardMenu) return undefined;
+    const dismissMenu = (event) => {
+      if (!event.target.closest?.('.forecast-clipboard-menu')) {
+        setClipboardMenu(null);
+      }
+    };
+    const handleMenuKey = (event) => {
+      if (event.key === 'Escape') setClipboardMenu(null);
+    };
+    document.addEventListener('pointerdown', dismissMenu);
+    document.addEventListener('keydown', handleMenuKey);
+    return () => {
+      document.removeEventListener('pointerdown', dismissMenu);
+      document.removeEventListener('keydown', handleMenuKey);
+    };
+  }, [clipboardMenu]);
+  const baseColumns = useMemo(() => createForecastColumns(metadata?.columns), [metadata?.columns]);
+  const formulaFields = useMemo(
+    () => baseColumns.filter((column) => column.type === 'numericColumn').map((column) => column.field),
+    [baseColumns],
+  );
+  const compiledFormula = useMemo(() => {
+    if (!formula) return null;
+    try {
+      return compileForecastFormula(formula, formulaFields);
+    } catch {
+      return null;
+    }
+  }, [formula, formulaFields]);
+  const columnDefs = useMemo(
+    () => createForecastColumns(metadata?.columns, compiledFormula),
+    [metadata?.columns, compiledFormula],
+  );
+  const [visibleColumnIds, setVisibleColumnIds] = useState(() =>
+    columnDefs.filter((column) => !column.hide).map((column) => column.colId),
+  );
+  const [isFieldPickerOpen, setIsFieldPickerOpen] = useState(false);
+  const [isRequiredDimensionsOpen, setIsRequiredDimensionsOpen] =
+    useState(false);
+  const [requiredDimensions, setRequiredDimensions] = useState(null);
+  const [isRequiredDimensionsLoading, setIsRequiredDimensionsLoading] =
+    useState(false);
+  const [requiredDimensionsError, setRequiredDimensionsError] = useState('');
+  const [viewMode, setViewMode] = useState('detail');
+  const [activeLayoutView, setActiveLayoutView] = useState('full');
+  const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
+  const [isCreateViewOpen, setIsCreateViewOpen] = useState(false);
+  const [customViews, setCustomViews] = useState([]);
   const defaultColDef = useMemo(
     () => ({
       sortable: true,
       filter: true,
       resizable: true,
-      floatingFilter: true,
+      floatingFilter: false,
       suppressHeaderMenuButton: false,
+      cellRendererSelector: (params) =>
+        params.node.rowPinned === 'top'
+          ? { component: InlineForecastCell }
+          : undefined,
     }),
     [],
   );
   const markDirty = useCallback((row) => {
-    dirtyRowsRef.current = new Map(dirtyRowsRef.current).set(row.UNIQ_ID, row);
-    setDirtyMap((current) => new Map(current).set(row.UNIQ_ID, row));
+    const changed = { ...row };
+    if (row.__editedFields?.length) {
+      changed.__editedFields = row.__editedFields;
+      changed.__editedAt = Date.now();
+    } else {
+      delete changed.__editedFields;
+      delete changed.__editedAt;
+    }
+    Object.assign(row, changed);
+    dirtyRowsRef.current = new Map(dirtyRowsRef.current).set(
+      row.UNIQ_ID,
+      changed,
+    );
+    setDirtyMap((current) => new Map(current).set(row.UNIQ_ID, changed));
   }, []);
-  const datasource = useMemo(
-    () => ({
+  const updateInlineRows = useCallback((update) => {
+    const nextRows = typeof update === 'function'
+      ? update(inlineRowValuesRef.current)
+      : update;
+    inlineRowValuesRef.current = nextRows;
+    setInlineRowValues(nextRows);
+  }, []);
+  const closeTransientUi = useCallback(({ preserveInlineRows = false } = {}) => {
+    setIsAddRowOpen(false);
+    if (!preserveInlineRows) updateInlineRows([]);
+    setRowDialogSeed(null);
+    setIsBulkUpdateOpen(false);
+    setIsBulkUpdateSelectedOpen(false);
+    setIsFormulaOpen(false);
+    setIsCreateViewOpen(false);
+    setIsRequiredDimensionsOpen(false);
+    setIsViewMenuOpen(false);
+    setIsFieldPickerOpen(false);
+    dashboardRef.current
+      ?.querySelectorAll('details[open]')
+      .forEach((details) => {
+        details.open = false;
+      });
+  }, [updateInlineRows]);
+  const trackGridRequest = (delta) => {
+    activeRequestsRef.current = Math.max(0, activeRequestsRef.current + delta);
+    setIsGridLoading(activeRequestsRef.current > 0);
+  };
+  const decorateRows = (rows, keyField) =>
+    rows.map((row) => {
+      const recent = recentEditsRef.current.get(row[keyField]);
+      return recent
+        ? { ...row, __editedFields: recent.fields, __recentlyUpdated: true }
+        : row;
+    });
+  const prioritizeLatestUpdates = () => {
+    const api = gridRef.current?.api;
+    if (!api) return;
+    api.applyColumnState?.({
+      state: [{ colId: 'UPDATED_TS', sort: 'desc', sortIndex: 0 }],
+      defaultState: { sort: null },
+    });
+    api.purgeInfiniteCache?.();
+  };
+  const datasource = useMemo(() => {
+    const cache = createCachedDatasource({
+      maxEntries: 400,
+      query: (request) => forecastService.queryRows(decodedName, request),
+      mapRows: (rows) => decorateRows(rows, 'UNIQ_ID'),
+      getDirtyRow: (row) => dirtyRowsRef.current.get(row.UNIQ_ID),
+    });
+    datasourceCacheRef.current = cache;
+    return {
       getRows: async (params) => {
+        trackGridRequest(1);
+        const request = {
+          startRow: params.startRow,
+          endRow: params.endRow,
+          sortModel: params.sortModel,
+          filterModel: params.filterModel,
+        };
         try {
-          const result = await forecastService.queryRows(decodedName, {
-            startRow: params.startRow,
-            endRow: params.endRow,
-            sortModel: params.sortModel,
-            filterModel: params.filterModel,
-          });
+          const hasSort = Boolean(request.sortModel?.length);
+          const hasFilter = Boolean(Object.keys(request.filterModel ?? {}).length);
+          const fullRows = fullyLoadedRowsRef.current;
+          const result =
+            fullRows && !hasSort && !hasFilter
+              ? {
+                  rows: fullRows.slice(request.startRow, request.endRow),
+                  totalRowCount: fullRows.length,
+                }
+              : await cache.get(request);
+          const loadedEndRow = request.startRow + result.rows.length;
+          const requestedRowCount = request.endRow - request.startRow;
+          const reachedLastRow =
+            result.rows.length < requestedRowCount ||
+            loadedEndRow >= result.totalRowCount;
           setTotalRowCount(result.totalRowCount);
-          const visibleRows = result.rows.map(
-            (row) => dirtyRowsRef.current.get(row.UNIQ_ID) ?? row,
+          params.successCallback(
+            result.rows,
+            reachedLastRow ? result.totalRowCount : undefined,
           );
-          params.successCallback(visibleRows, result.totalRowCount);
         } catch (requestError) {
           setMessage(requestError.message);
           params.failCallback();
+        } finally {
+          trackGridRequest(-1);
+        }
+      },
+      destroy: () => cache.clear(),
+    };
+  }, [decodedName]);
+  const summaryDatasource = useMemo(
+    () => ({
+      getRows: async (params) => {
+        trackGridRequest(1);
+        const request = {
+          startRow: params.startRow,
+          endRow: params.endRow,
+          sortModel: params.sortModel,
+          filterModel: params.filterModel,
+        };
+        const requestKey = JSON.stringify(['summary', decodedName, request]);
+        let pending = pendingQueriesRef.current.get(requestKey);
+        try {
+          if (!pending) {
+            pending = forecastService.querySummaryRows(decodedName, request);
+            pendingQueriesRef.current.set(requestKey, pending);
+          }
+          const result = await pending;
+          setTotalRowCount(result.totalRowCount);
+          params.successCallback(result.rows, result.totalRowCount);
+        } catch (requestError) {
+          setMessage(requestError.message);
+          params.failCallback();
+        } finally {
+          if (pendingQueriesRef.current.get(requestKey) === pending) {
+            pendingQueriesRef.current.delete(requestKey);
+          }
+          trackGridRequest(-1);
         }
       },
     }),
     [decodedName],
   );
+  useEffect(() => {
+    setSavedFormula({ template: decodedName, value: readNovFormula(decodedName), pending: readFormulaPending(decodedName) });
+  }, [decodedName]);
+  useEffect(() => {
+    if (!compiledFormula) return;
+    const api = gridRef.current?.api;
+    api?.applyColumnState?.({ state: [{ colId: 'NOV_FORECAST', sort: null, sortIndex: null }] });
+    const filters = api?.getFilterModel?.();
+    if (filters && 'NOV_FORECAST' in filters) {
+      const remaining = { ...filters };
+      delete remaining.NOV_FORECAST;
+      api.setFilterModel(remaining);
+    }
+  }, [compiledFormula]);
   useEffect(() => {
     const controller = new AbortController();
     forecastService
@@ -72,27 +485,183 @@ export default function ForecastPage() {
       .then(setMetadata)
       .catch((error) => {
         if (!controller.signal.aborted) setMessage(error.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsMetadataLoading(false);
       });
     return () => controller.abort();
   }, [decodedName]);
+  useEffect(() => {
+    const currentState = gridRef.current?.api.getColumnState?.();
+    const state =
+      currentState?.length > 0
+        ? currentState
+        : columnDefs.map(({ colId, hide }) => ({ colId, hide: Boolean(hide) }));
+    setVisibleColumnIds(
+      state.filter((column) => !column.hide).map((column) => column.colId),
+    );
+  }, [columnDefs]);
+  useEffect(() => {
+    if (isMetadataLoading) return;
+    try {
+      const saved = JSON.parse(
+        localStorage.getItem(`opex360:views:${decodedName}`) ?? '[]',
+      );
+      if (!Array.isArray(saved)) {
+        throw new Error('Saved forecast views are not in a valid format.');
+      }
+      const availableColumnIds = new Set(
+        columnDefs.map((column) => column.colId),
+      );
+      const views = saved.map((view) => {
+        if (
+          !view ||
+          typeof view.id !== 'string' ||
+          typeof view.name !== 'string' ||
+          !Array.isArray(view.columnIds) ||
+          !view.columnIds.every((columnId) => availableColumnIds.has(columnId))
+        ) {
+          throw new Error('Saved forecast views are not in a valid format.');
+        }
+        return view;
+      });
+      setCustomViews(views);
+    } catch (error) {
+      setMessage(`Unable to load saved forecast views: ${error.message}`);
+    }
+  }, [columnDefs, decodedName, isMetadataLoading]);
   const handleCellValueChanged = useCallback(
-    ({ data }) => markDirty(data),
-    [markDirty],
+    ({ data, colDef, node }) => {
+      if (node?.rowPinned || data?.__INLINE_NEW_ROW) return;
+      if (!gridPasteInProgressRef.current) closeTransientUi();
+      const editedFields = new Set(data.__editedFields ?? []);
+      if (colDef?.field) editedFields.add(colDef.field);
+      data.__editedFields = [...editedFields];
+      data.__editedAt = Date.now();
+      markDirty(data);
+      gridRef.current?.api.refreshCells?.({ force: true });
+    },
+    [closeTransientUi, markDirty],
   );
   const handleGridReady = useCallback(
     ({ api }) => {
       gridRef.current = { api };
       const saved = loadColumnState(decodedName);
       if (saved) {
-        const state = saved.map((column) =>
-          column.colId === 'BRAND' ? { ...column, hide: false } : column,
-        );
+        const state = limitPinnedDescriptorColumns(
+          orderDescriptorColumnsFirst(saved, columnDefs),
+        ).map((column) => ({
+          ...column,
+          ...(column.colId === 'BRAND' ? { hide: false } : {}),
+          ...(column.colId === 'NOV_FORECAST' && compiledFormula ? { sort: null, sortIndex: null } : {}),
+        }));
         api.applyColumnState({ state, applyOrder: true });
         saveColumnState(decodedName, api.getColumnState());
       }
+      const currentState =
+        api.getColumnState?.() ??
+        columnDefs.map(({ colId }) => ({ colId, hide: false }));
+      setVisibleColumnIds(
+        currentState
+          .filter((column) => !column.hide)
+          .map((column) => column.colId),
+      );
+    },
+    [columnDefs, compiledFormula, decodedName],
+  );
+  const applyNovFormula = (nextFormula) => {
+    try {
+      if (nextFormula) localStorage.setItem(`opex360:nov-formula:${decodedName}`, nextFormula);
+      else localStorage.removeItem(`opex360:nov-formula:${decodedName}`);
+      if (nextFormula) localStorage.setItem(`opex360:nov-formula-pending:${decodedName}`, '1');
+      else localStorage.removeItem(`opex360:nov-formula-pending:${decodedName}`);
+    } catch (error) {
+      setMessage(`Unable to save the NOV formula in this browser: ${error.message}`);
+      return;
+    }
+    if (nextFormula) {
+      const api = gridRef.current?.api;
+      api?.applyColumnState?.({ state: [{ colId: 'NOV_FORECAST', sort: null, sortIndex: null }] });
+      const filters = api?.getFilterModel?.();
+      if (filters && 'NOV_FORECAST' in filters) {
+        const remaining = { ...filters };
+        delete remaining.NOV_FORECAST;
+        api.setFilterModel(remaining);
+      }
+    }
+    setSavedFormula({ template: decodedName, value: nextFormula, pending: Boolean(nextFormula) });
+    setIsFormulaOpen(false);
+  };
+  const handleColumnVisible = useCallback(
+    ({ api }) => {
+      const state = api.getColumnState();
+      setVisibleColumnIds(
+        state.filter((column) => !column.hide).map((column) => column.colId),
+      );
+      saveColumnState(decodedName, state);
     },
     [decodedName],
   );
+  const handleFieldToggle = (field, isVisible) => {
+    gridRef.current?.api.setColumnsVisible([field], isVisible);
+  };
+  const applyLayoutView = (viewId, columnIds) => {
+    setActiveLayoutView(viewId);
+    setIsViewMenuOpen(false);
+    if (viewId === 'summary') return;
+    const allColumnIds = columnDefs.map((column) => column.colId);
+    const visibleIds = columnIds ?? allColumnIds;
+    gridRef.current?.api.setColumnsVisible(allColumnIds, false);
+    gridRef.current?.api.setColumnsVisible(visibleIds, true);
+  };
+  const saveCustomView = (name, columnIds) => {
+    const newView = {
+      id: `custom-${Date.now()}`,
+      name,
+      columnIds,
+    };
+    const nextViews = [...customViews, newView];
+    try {
+      localStorage.setItem(
+        `opex360:views:${decodedName}`,
+        JSON.stringify(nextViews),
+      );
+    } catch (error) {
+      setMessage(`Unable to save this view: ${error.message}`);
+      return;
+    }
+    setCustomViews(nextViews);
+    setIsCreateViewOpen(false);
+    applyLayoutView(newView.id, columnIds);
+  };
+  const openRequiredDimensions = async () => {
+    setIsRequiredDimensionsOpen(true);
+    setIsRequiredDimensionsLoading(true);
+    setRequiredDimensionsError('');
+    try {
+      const api = gridRef.current?.api;
+      const row =
+        api?.getSelectedRows?.()[0] ?? api?.getDisplayedRowAtIndex?.(0)?.data;
+      if (row) {
+        setRequiredDimensions(row);
+        return;
+      }
+      const result = await forecastService.queryRows(decodedName, {
+        startRow: 0,
+        endRow: 1,
+        sortModel: [],
+        filterModel: {},
+      });
+      if (!result.rows.length) {
+        throw new Error('No forecast rows are available for this template.');
+      }
+      setRequiredDimensions(result.rows[0]);
+    } catch (error) {
+      setRequiredDimensionsError(error.message);
+    } finally {
+      setIsRequiredDimensionsLoading(false);
+    }
+  };
   const handleColumnMoved = useCallback(
     ({ api, column, finished }) => {
       if (!finished || !column) return;
@@ -113,31 +682,446 @@ export default function ForecastPage() {
     setIsAddRowOpen(true);
   };
   const handleRowCreated = (notice) => {
-    setIsAddRowOpen(false);
-    setRowDialogSeed(null);
+    closeTransientUi();
     setMessage(notice);
-    gridRef.current?.api.refreshInfiniteCache();
+    prioritizeLatestUpdates();
   };
-  const applyBulkUpdate = useCallback(
-    (field, value) => {
-      const selectedRows = gridRef.current?.api.getSelectedRows() ?? [];
-      if (!selectedRows.length) return;
-      const selectedNodes = gridRef.current?.api.getSelectedNodes() ?? [];
-      selectedNodes.forEach((node) => {
-        node.setDataValue(field, value);
-        markDirty({ ...node.data, [field]: value });
-      });
-      setIsBulkUpdateOpen(false);
-      setMessage(
-        `Applied ${field} to ${selectedRows.length} row(s). Save to persist the changes.`,
+  const openInlineRow = () => {
+    const inlineId = nextInlineRowIdRef.current--;
+    const row = {
+      TEMPLATE_NAME: decodedName,
+      VERSION: metadata?.version ?? '10+2',
+      CURRENCY: 'USD',
+      STATUS: 'Working',
+      INSERTED: 'Y',
+      __INLINE_NEW_ROW: true,
+      __INLINE_NEW_ROW_ID: inlineId,
+    };
+    REQUIRED_NEW_ROW_FIELDS.forEach((field) => {
+      row[field] = '';
+    });
+    columnDefs.forEach((column) => {
+      if (column.field && !(column.field in row)) row[column.field] = '';
+    });
+    updateInlineRows((current) => [...current, row]);
+    setMessage('Enter values in the new top row(s). Use Save when all required fields are complete.');
+  };
+  const handleInlineRowChange = useCallback((inlineId, field, value) => {
+    const row = inlineRowValuesRef.current.find(
+      (candidate) => candidate.__INLINE_NEW_ROW_ID === inlineId,
+    );
+    if (!row) return;
+    row[field] = value;
+    setInlineRowRevision((revision) => revision + 1);
+  }, []);
+  const removeInlineRow = useCallback((inlineId) => {
+    updateInlineRows((current) =>
+      current.filter((row) => row.__INLINE_NEW_ROW_ID !== inlineId),
+    );
+  }, [updateInlineRows]);
+  const handleInlineRowPaste = useCallback(({ inlineId, text, field, api, node }) => {
+    const rowValues = inlineRowValuesRef.current.find(
+      (row) => row.__INLINE_NEW_ROW_ID === inlineId,
+    );
+    if (!rowValues) return;
+    const changes = mapInlinePaste({
+      text,
+      field,
+      api,
+      columnDefs,
+      values: rowValues,
+    });
+    if (Object.keys(changes).length) {
+      Object.assign(rowValues, changes);
+      const changedColumns = Object.keys(changes).filter(
+        (target) => target !== field,
       );
+      if (changedColumns.length && node) {
+        api?.refreshCells?.({
+          rowNodes: [node],
+          columns: changedColumns,
+          force: true,
+        });
+      }
+      setInlineRowRevision((revision) => revision + 1);
+      setMessage('Pasted spreadsheet cells into the new first row.');
+    }
+    return changes;
+  }, [columnDefs]);
+  const handleInlineRowsPaste = useCallback(({ text, inlineId, api, field }) => {
+    const matrix = parseClipboardText(text);
+    const pastedRows = createRowsFromHeaderPaste(api, matrix, {
+      templateName: decodedName,
+      version: metadata?.version ?? '10+2',
+      createId: () => nextInlineRowIdRef.current--,
+    }) ?? createRowsFromFullRowPaste(api, matrix, {
+      templateName: decodedName,
+      version: metadata?.version ?? '10+2',
+      createId: () => nextInlineRowIdRef.current--,
+    });
+    let mappedRows = pastedRows.length
+      ? pastedRows.map((row) => ({
+          ...row,
+          __INLINE_NEW_ROW: true,
+          __INLINE_NEW_ROW_ID: row.UNIQ_ID,
+        }))
+      : [];
+    if (!mappedRows.length && matrix.length > 1) {
+      const seed = inlineRowValuesRef.current.find(
+        (row) => row.__INLINE_NEW_ROW_ID === inlineId,
+      );
+      const mappedChanges = mapInlinePasteRows({
+        text,
+        field,
+        api,
+        columnDefs,
+        values: seed,
+      });
+      mappedRows = mappedChanges
+        .filter((changes) => Object.keys(changes).length)
+        .map((changes) => {
+          const rowId = nextInlineRowIdRef.current--;
+          return {
+            TEMPLATE_NAME: decodedName,
+            VERSION: metadata?.version ?? '10+2',
+            CURRENCY: '',
+            STATUS: 'Working',
+            INSERTED: 'Y',
+            __INLINE_NEW_ROW: true,
+            __INLINE_NEW_ROW_ID: rowId,
+            UNIQ_ID: rowId,
+            ...changes,
+          };
+        });
+    }
+    if (!mappedRows.length) {
+      setMessage('Paste a headered Excel range, a complete multi-column range, or select editable cells in an added row.');
+      return;
+    }
+    updateInlineRows((current) => {
+      const anchorIndex = current.findIndex(
+        (row) => row.__INLINE_NEW_ROW_ID === inlineId,
+      );
+      const pasteIndex = anchorIndex >= 0 ? anchorIndex : current.length;
+      const before = current.slice(0, pasteIndex);
+      const availableRows = current.slice(pasteIndex);
+      const pastedIntoRows = mappedRows.map((pastedRow, index) => {
+        const existingRow = availableRows[index];
+        if (!existingRow) return pastedRow;
+        return {
+          ...existingRow,
+          ...pastedRow,
+          UNIQ_ID: existingRow.UNIQ_ID,
+          __INLINE_NEW_ROW: true,
+          __INLINE_NEW_ROW_ID: existingRow.__INLINE_NEW_ROW_ID,
+        };
+      });
+      return [
+        ...before,
+        ...pastedIntoRows,
+        ...availableRows.slice(mappedRows.length),
+      ];
+    });
+    setMessage(`Added ${mappedRows.length} pasted row(s). Complete required fields, then Save.`);
+  }, [columnDefs, decodedName, metadata?.version, updateInlineRows]);
+  const applyBulkUpdate = useCallback(
+    async (field, value) => {
+      if (isSaving || !totalRowCount) return;
+      setIsSaving(true);
+      closeTransientUi();
+      setMessage(`Preparing bulk update for all ${totalRowCount.toLocaleString()} records…`);
+      try {
+        const requests = [];
+        for (let startRow = 0; startRow < totalRowCount; startRow += BULK_PAGE_SIZE) {
+          requests.push({
+            startRow,
+            endRow: Math.min(startRow + BULK_PAGE_SIZE, totalRowCount),
+            sortModel: [],
+            filterModel: {},
+          });
+        }
+        const rows = [];
+        for (let start = 0; start < requests.length; start += BULK_CONCURRENCY) {
+          const pageResults = await Promise.all(
+            requests
+              .slice(start, start + BULK_CONCURRENCY)
+              .map((request) => retryBulkRequest(() => forecastService.queryRows(decodedName, request))),
+          );
+          pageResults.forEach((result) => rows.push(...result.rows));
+          setMessage(
+            `Loaded ${Math.min(rows.length, totalRowCount).toLocaleString()} of ${totalRowCount.toLocaleString()} records…`,
+          );
+        }
+        if (rows.length !== totalRowCount) {
+          throw new Error(`Expected ${totalRowCount.toLocaleString()} rows but loaded ${rows.length.toLocaleString()}. Nothing was saved; retry the operation.`);
+        }
+        const payload = decoratePhysicalRows(rows).map((row) => ({ ...row, [field]: value }));
+        let processed = 0;
+        for (let start = 0; start < payload.length; start += BULK_SAVE_BATCH_SIZE * BULK_CONCURRENCY) {
+          const window = payload.slice(
+            start,
+            start + BULK_SAVE_BATCH_SIZE * BULK_CONCURRENCY,
+          );
+          const batches = [];
+          for (let offset = 0; offset < window.length; offset += BULK_SAVE_BATCH_SIZE) {
+            batches.push(window.slice(offset, offset + BULK_SAVE_BATCH_SIZE));
+          }
+          await Promise.all(
+            batches.map((batch) =>
+                retryBulkRequest(() => forecastService.saveRows(
+                  decodedName,
+                  batch.map(({ __physicalRowKey, ...row }) => row),
+                )),
+              ),
+          );
+          processed += window.length;
+          setMessage(
+            `Updated ${Math.min(processed, payload.length).toLocaleString()} of ${payload.length.toLocaleString()} records…`,
+          );
+        }
+        // Every record is already in memory after the bulk load. Keep that snapshot so
+        // scrolling does not request the same records again.
+        fullyLoadedRowsRef.current = payload;
+        dirtyRowsRef.current = new Map();
+        setDirtyMap(new Map());
+        gridRef.current?.api.deselectAll?.();
+        setSelectedCount(0);
+        gridRef.current?.api.refreshInfiniteCache?.();
+        setMessage(
+          `Bulk update completed. ${payload.length.toLocaleString()} records were updated in asynchronous batches.`,
+        );
+      } catch (error) {
+        setMessage(`Bulk update stopped: ${error.message}`);
+      } finally {
+        setIsSaving(false);
+      }
     },
-    [markDirty],
+    [closeTransientUi, decodedName, isSaving, totalRowCount],
   );
+  // Bulk update for the rows that are selected right now (header checkbox = every row
+  // that is loaded in the grid). Nothing is re-fetched: the selected rows already hold the
+  // full record, so they are sent to the same validated save endpoint in batches.
+  const applyBulkUpdateSelected = useCallback(
+    async (field, value) => {
+      if (isSaving) return;
+      const api = gridRef.current?.api;
+      api?.stopEditing?.();
+      if (dirtyRowsRef.current.size) {
+        closeTransientUi();
+        setMessage('Save pending changes before running a bulk update.');
+        return;
+      }
+      if (field === 'NOV_FORECAST' && formula) {
+        closeTransientUi();
+        setMessage('Remove the NOV formula before bulk updating NOV Forecast. The formula calculates NOV on Save.');
+        return;
+      }
+      if (
+        !SELECTED_BULK_FIELDS.some((item) => item.field === field) ||
+        !Number.isFinite(value)
+      ) {
+        setMessage('Choose November or December Forecast and enter a valid number.');
+        return;
+      }
+      const nodes = getSelectedForecastNodes(api);
+      if (!nodes.length) {
+        closeTransientUi();
+        setMessage('Select at least one loaded row before using Bulk update selected.');
+        return;
+      }
+      setIsSaving(true);
+      closeTransientUi();
+      setMessage(`Preparing bulk update for ${nodes.length.toLocaleString()} selected record(s)…`);
+      try {
+        const payload = buildSelectedBulkPayload(nodes, field, value);
+        const slice = BULK_SAVE_BATCH_SIZE * BULK_CONCURRENCY;
+        let processed = 0;
+        for (let start = 0; start < payload.length; start += slice) {
+          const windowRows = payload.slice(start, start + slice);
+          await Promise.all(
+            chunkRows(windowRows, BULK_SAVE_BATCH_SIZE).map(async (batch) => {
+              const result = await retryBulkRequest(() =>
+                forecastService.saveRows(decodedName, batch),
+              );
+              if (result?.errors?.length) {
+                throw new Error(result.errors.map((error) => error.message).join('; '));
+              }
+              if (typeof result?.saved === 'number' && result.saved !== batch.length) {
+                throw new Error(`The server saved ${result.saved} of ${batch.length} requested rows. Some changes may already be committed; review the template before retrying.`);
+              }
+            }),
+          );
+          processed += windowRows.length;
+          setMessage(
+            `Updated ${Math.min(processed, payload.length).toLocaleString()} of ${payload.length.toLocaleString()} selected records…`,
+          );
+        }
+        // Keep the grid and the datasource cache in sync without another server request.
+        applySelectedBulkValue(nodes, field, value);
+        nodes.forEach(({ data }) => {
+          recentEditsRef.current.set(data.UNIQ_ID, {
+            fields: data.__editedFields,
+            updatedAt: Date.now(),
+          });
+        });
+        // Keep the "all rows loaded" snapshot (created by Bulk update all / Copy prior) in sync.
+        if (fullyLoadedRowsRef.current) {
+          const updatedIds = new Set(nodes.map(({ data }) => data.UNIQ_ID));
+          fullyLoadedRowsRef.current.forEach((row) => {
+            if (updatedIds.has(row.UNIQ_ID)) row[field] = value;
+          });
+        }
+        datasourceCacheRef.current?.clear();
+        api?.refreshCells?.({ rowNodes: nodes, columns: [field], force: true });
+        api?.redrawRows?.({ rowNodes: nodes });
+        setMessage(
+          `Bulk update completed. ${field === 'NOV_FORECAST' ? 'November' : 'December'} Forecast was set to ${value} for ${nodes.length.toLocaleString()} selected record(s). The selection was kept so you can update the other month too.`,
+        );
+      } catch (error) {
+        setMessage(`Bulk update stopped: ${error.message}`);
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [closeTransientUi, decodedName, formula, isSaving],
+  );
+  const copyPriorForecastToForecast = useCallback(async () => {
+    if (isSaving || !totalRowCount) return;
+    if (formula) {
+      setMessage(
+        'Remove the NOV formula before copying prior forecast values. The formula would otherwise overwrite NOV Forecast during Save.',
+      );
+      return;
+    }
+    setIsSaving(true);
+    closeTransientUi();
+    setMessage(
+      `Preparing prior forecast values for all ${totalRowCount.toLocaleString()} records…`,
+    );
+    try {
+      const requests = [];
+      for (
+        let startRow = 0;
+        startRow < totalRowCount;
+        startRow += BULK_PAGE_SIZE
+      ) {
+        requests.push({
+          startRow,
+          endRow: Math.min(startRow + BULK_PAGE_SIZE, totalRowCount),
+          sortModel: [],
+          filterModel: {},
+        });
+      }
+      const rows = [];
+      for (let start = 0; start < requests.length; start += BULK_CONCURRENCY) {
+        const pageResults = await Promise.all(
+          requests
+            .slice(start, start + BULK_CONCURRENCY)
+            .map((request) => retryBulkRequest(() => forecastService.queryRows(decodedName, request))),
+        );
+        pageResults.forEach((result) => rows.push(...result.rows));
+        setMessage(
+          `Loaded ${Math.min(rows.length, totalRowCount).toLocaleString()} of ${totalRowCount.toLocaleString()} records…`,
+        );
+      }
+      if (rows.length !== totalRowCount) {
+        throw new Error(`Expected ${totalRowCount.toLocaleString()} rows but loaded ${rows.length.toLocaleString()}. No prior values were copied; retry the operation.`);
+      }
+      const physicalRows = decoratePhysicalRows(rows);
+      const nextDirtyMap = new Map(dirtyRowsRef.current);
+      physicalRows.forEach((sourceRow) => {
+        const existingRow = nextDirtyMap.get(sourceRow.__physicalRowKey);
+        const row = existingRow ? { ...sourceRow, ...existingRow } : { ...sourceRow };
+        // Actual Snowflake schema: NOV_PRIORFORECAST / DEC_PRIORFORECAST.
+        // Read from sourceRow so an existing dirty edit cannot hide the source value.
+        const novPriorForecast =
+          sourceRow.NOV_PRIORFORECAST ??
+          sourceRow.NOV_PRIOR_FORECAST ??
+          sourceRow.NOV_PRIOR;
+        const decPriorForecast =
+          sourceRow.DEC_PRIORFORECAST ??
+          sourceRow.DEC_PRIOR_FORECAST ??
+          sourceRow.DEC_PRIOR;
+        row.NOV_FORECAST = novPriorForecast ?? null;
+        row.DEC_FORECAST = decPriorForecast ?? null;
+        row.__editedFields = [
+          ...new Set([
+            ...(row.__editedFields ?? []),
+            'NOV_FORECAST',
+            'DEC_FORECAST',
+          ]),
+        ];
+        row.__editedAt = Date.now();
+        nextDirtyMap.set(row.__physicalRowKey, row);
+      });
+      const rowsMissingPriorForecast = physicalRows.filter(
+        (row) =>
+          row.NOV_PRIORFORECAST == null &&
+          row.NOV_PRIOR_FORECAST == null &&
+          row.NOV_PRIOR == null &&
+          row.DEC_PRIORFORECAST == null &&
+          row.DEC_PRIOR_FORECAST == null &&
+          row.DEC_PRIOR == null,
+      ).length;
+      if (rowsMissingPriorForecast === physicalRows.length && physicalRows.length) {
+        throw new Error(
+          'Prior forecast columns were not returned by the rows API. Expected NOV_PRIORFORECAST/DEC_PRIORFORECAST.',
+        );
+      }
+      dirtyRowsRef.current = nextDirtyMap;
+      setDirtyMap(new Map(nextDirtyMap));
+      // The action has already loaded every record. Reuse those rows locally so an
+      // AG Grid scroll does not go back to Snowflake/API for the same blocks.
+      fullyLoadedRowsRef.current = physicalRows.map(
+        (row) => nextDirtyMap.get(row.__physicalRowKey) ?? row,
+      );
+      gridRef.current?.api.refreshInfiniteCache?.();
+      gridRef.current?.api.refreshCells?.({
+        columns: ['NOV_FORECAST', 'DEC_FORECAST'],
+        force: true,
+      });
+      setMessage(
+        `Copied NOV Prior Forecast to NOV Forecast and DEC Prior Forecast to DEC Forecast for ${physicalRows.length.toLocaleString()} records. Click Save to persist the changes.`,
+      );
+    } catch (error) {
+      setMessage(`Unable to copy prior forecast values: ${error.message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [
+    closeTransientUi,
+    decodedName,
+    formula,
+    isSaving,
+    totalRowCount,
+  ]);
   const save = async () => {
-    if (!dirtyRows.length) return;
+    gridRef.current?.api.stopEditing?.();
+    let inlineRowsToSave = [];
+    try {
+      inlineRowsToSave = inlineRowValues.map((values) =>
+        buildInlineRowPayload({
+          values,
+          columns: columnDefs,
+          templateName: decodedName,
+          version: metadata?.version ?? '10+2',
+          formula,
+          calculateNov: compiledFormula,
+          formulaPending,
+        }),
+      );
+    } catch (error) {
+      setMessage(error.message);
+      return;
+    }
+    const rowsToSave = [...dirtyRowsRef.current.values(), ...inlineRowsToSave];
+    if (!rowsToSave.length || isSaving) return;
+    if (formula && !compiledFormula) {
+      setMessage('The NOV formula is invalid or references unavailable fields. Edit or remove it before saving.');
+      return;
+    }
     if (
-      dirtyRows.some(
+      rowsToSave.some(
         (row) =>
           row.INSERTED === 'Y' &&
           Number(row.NOV_FORECAST ?? 0) === 0 &&
@@ -148,40 +1132,339 @@ export default function ForecastPage() {
       )
     )
       return;
+    setIsSaving(true);
     try {
-      const result = await forecastService.saveRows(decodedName, dirtyRows);
-      setMessage(result.message);
+      let savePayload;
+      if (formulaPending && compiledFormula) {
+        savePayload = await buildNovFormulaPayload({
+          templateName: decodedName,
+          calculate: compiledFormula,
+          dirtyRows: rowsToSave,
+          queryRows: forecastService.queryRows,
+          onProgress: (loaded, total) => setMessage(`Calculating NOV for ${loaded.toLocaleString()} of ${total.toLocaleString()} records…`),
+        });
+      } else if (compiledFormula) {
+        savePayload = calculateDirtyNovRows(rowsToSave, compiledFormula);
+      } else {
+        savePayload = rowsToSave.map(({ __editedFields, __editedAt, __recentlyUpdated, ...row }) => row);
+      }
+      let result = { message: 'No forecast rows to update.' };
+      if (savePayload.length > BULK_SAVE_BATCH_SIZE) {
+        let saved = 0;
+        for (let start = 0; start < savePayload.length; start += BULK_SAVE_BATCH_SIZE) {
+          const batch = savePayload.slice(start, start + BULK_SAVE_BATCH_SIZE)
+            .map(({ __physicalRowKey, ...row }) => row);
+          const batchResult = await retryBulkRequest(() =>
+            forecastService.saveRows(decodedName, batch),
+          );
+          saved += typeof batchResult.saved === 'number' ? batchResult.saved : batch.length;
+          setMessage(`Saved ${saved.toLocaleString()} of ${savePayload.length.toLocaleString()} records…`);
+        }
+        result = { saved, message: `Updated ${saved.toLocaleString()} row(s).` };
+      } else if (savePayload.length) {
+        const batch = savePayload.map(({ __physicalRowKey, ...row }) => row);
+        result = await retryBulkRequest(() => forecastService.saveRows(decodedName, batch));
+      }
+      if (result.errors?.length) throw new Error(result.errors.map((error) => error.message).join('; '));
+      if (typeof result.saved === 'number' && result.saved !== savePayload.length) {
+        throw new Error(`The server saved ${result.saved} of ${savePayload.length} requested rows. Some changes may already be committed; review the template before retrying.`);
+      }
+      rowsToSave.forEach((row) => {
+        recentEditsRef.current.set(row.UNIQ_ID, {
+          fields: [...new Set([...(row.__editedFields ?? []), ...(compiledFormula ? ['NOV_FORECAST'] : [])])],
+          updatedAt: Date.now(),
+        });
+      });
+      let saveMessage = result.message;
+      if (formulaPending) {
+        try {
+          localStorage.setItem(`opex360:nov-formula-pending:${decodedName}`, '0');
+        } catch {
+          saveMessage += ' The browser could not remember that the formula was saved.';
+        }
+        setSavedFormula((current) => current.template === decodedName ? { ...current, pending: false } : current);
+      }
+      setMessage(saveMessage);
       dirtyRowsRef.current = new Map();
       setDirtyMap(new Map());
-      gridRef.current?.api.refreshInfiniteCache();
+      closeTransientUi();
+      gridRef.current?.api.deselectAll?.();
+      setSelectedCount(0);
+      prioritizeLatestUpdates();
     } catch (e) {
       setMessage(e.message);
+    } finally {
+      setIsSaving(false);
     }
   };
-  const handlePaste = (event) => {
-    if (['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return;
+  const handleCopy = (event) => {
+    if (['INPUT', 'TEXTAREA'].includes(event.target?.tagName)) return;
+    const text = copyRowsToClipboard(gridRef.current?.api);
+    if (!text || !event.clipboardData) return;
+    event.preventDefault();
+    event.clipboardData.setData('text/plain', text);
+    setMessage(`Copied forecast data with headers (${text.split('\n').length - 1} row(s)).`);
+  };
+  const getFocusedCutTarget = () => {
+    const api = gridRef.current?.api;
+    const focused = api?.getFocusedCell?.();
+    const node = focused && api.getDisplayedRowAtIndex?.(focused.rowIndex);
+    const column = focused?.column;
+    if (!node?.data || !column || column.isCellEditable?.(node) !== true) {
+      return null;
+    }
+    const text = copyRowsToClipboard(api, {
+      includeHeaders: false,
+      focusedCellOnly: true,
+    });
+    return text ? { text, node, column } : null;
+  };
+  const handleCut = (event) => {
+    if (['INPUT', 'TEXTAREA'].includes(event.target?.tagName)) return;
+    const target = getFocusedCutTarget();
+    if (!target || !event.clipboardData) {
+      setMessage('Cut is available only on an editable focused cell.');
+      return;
+    }
+    event.preventDefault();
+    event.clipboardData.setData('text/plain', target.text);
+    target.node.setDataValue(target.column.getColId(), null);
+    setMessage('Cut the focused cell. Save to persist the cleared value.');
+  };
+  const savePastedRows = async (newRows) => {
+    if (!newRows.length) {
+      setMessage('Nothing to paste. Copy one or more forecast data rows.');
+      return;
+    }
+    closeTransientUi({ preserveInlineRows: true });
+    setIsSaving(true);
+    trackGridRequest(1);
+    try {
+      const payload = newRows.map(
+        ({ __editedFields, __editedAt, ...row }) => row,
+      );
+      const result = await forecastService.saveRows(decodedName, payload);
+      newRows.forEach((row) => {
+        recentEditsRef.current.set(row.UNIQ_ID, {
+          fields: row.__editedFields,
+          updatedAt: Date.now(),
+        });
+      });
+      setMessage(`Inserted ${newRows.length} pasted row(s). ${result.message}`);
+      prioritizeLatestUpdates();
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setIsSaving(false);
+      trackGridRequest(-1);
+    }
+  };
+  const handlePasteText = async (text) => {
     const api = gridRef.current?.api;
     if (!api) return;
-    event.preventDefault();
-    const matrix = parseClipboardText(event.clipboardData.getData('text'));
-    const changed = applyPasteToGrid(api, matrix);
+    const matrix = parseClipboardText(text);
+    if (activeLayoutView !== 'summary') {
+      const headerRows = createRowsFromHeaderPaste(api, matrix, {
+        templateName: decodedName,
+        version: metadata?.version ?? '10+2',
+        createId: () => nextPastedRowIdRef.current--,
+      });
+      if (headerRows) {
+        await savePastedRows(headerRows);
+        return;
+      }
+    }
+    if (
+      activeLayoutView !== 'summary' &&
+      isFullRowPaste(api, matrix)
+    ) {
+      const newRows = createRowsFromFullRowPaste(api, matrix, {
+        templateName: decodedName,
+        version: metadata?.version ?? '10+2',
+        createId: () => nextPastedRowIdRef.current--,
+      });
+      await savePastedRows(newRows);
+      return;
+    }
+    let changed;
+    gridPasteInProgressRef.current = true;
+    try {
+      changed = applyPasteToGrid(api, matrix, {
+        allowFullRowPaste: activeLayoutView !== 'summary',
+      });
+    } finally {
+      gridPasteInProgressRef.current = false;
+    }
+    const emptyPasteMessage =
+      activeLayoutView === 'summary'
+        ? 'Nothing pasted. Switch to a detail view to paste forecast rows.'
+        : 'Nothing pasted. Paste a full row or focus an editable cell (Nov/Dec/Notes).';
     setMessage(
       changed.length
         ? `Pasted into ${changed.length} row(s). Save to persist the changes.`
-        : 'Nothing pasted. Focus an editable cell (Nov/Dec/Notes) first.',
+        : emptyPasteMessage,
     );
+  };
+  const handlePaste = async (event) => {
+    const text = event.clipboardData.getData('text');
+    const isMultiline = /\r?\n/.test(text.replace(/\r?\n$/, ''));
+    if (['INPUT', 'TEXTAREA'].includes(event.target?.tagName)) {
+      if (!isMultiline) return;
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    if (!gridRef.current?.api) return;
+    event.preventDefault();
+    await handlePasteText(text);
+  };
+  const handleGridContextMenu = (event) => {
+    event.preventDefault();
+    setClipboardMenu({
+      left: Math.min(event.clientX, window.innerWidth - 180),
+      top: Math.min(event.clientY, window.innerHeight - 130),
+    });
+  };
+  const copyFromContextMenu = async (includeHeaders = false) => {
+    const text = copyRowsToClipboard(gridRef.current?.api, { includeHeaders });
+    if (!text) {
+      setMessage('Focus a grid cell or select rows before copying.');
+      setClipboardMenu(null);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setMessage(
+        includeHeaders
+          ? `Copied forecast data with headers (${text.split('\n').length - 1} row(s)).`
+          : `Copied forecast data (${text.split('\n').length} row(s)).`,
+      );
+    } catch {
+      setMessage('Clipboard access was denied. Use Ctrl+C while the grid is focused.');
+    }
+    setClipboardMenu(null);
+  };
+  const pasteFromContextMenu = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      await handlePasteText(text);
+    } catch {
+      setMessage('Clipboard access was denied. Allow access or use Ctrl+V in the grid.');
+    }
+    setClipboardMenu(null);
+  };
+  const cutFromContextMenu = async () => {
+    const target = getFocusedCutTarget();
+    if (!target) {
+      setMessage('Cut is available only on an editable focused cell.');
+      setClipboardMenu(null);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(target.text);
+      target.node.setDataValue(target.column.getColId(), null);
+      setMessage('Cut the focused cell. Save to persist the cleared value.');
+    } catch {
+      setMessage('Clipboard access was denied. The cell was not cleared.');
+    }
+    setClipboardMenu(null);
   };
   const resetLayout = () => {
     localStorage.removeItem(`opex360:grid:${decodedName}`);
     gridRef.current?.api.resetColumnState();
+    setActiveLayoutView('full');
   };
+  const handleExport = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    try {
+      await forecastService.exportRows(decodedName);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+  const summaryToKpiView = () => {
+    setViewMode('kpi');
+    document.getElementById('forecast-kpis')?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    });
+  };
+  const kpis = Object.entries(metadata?.kpis ?? {});
+  const priorForecast = Number(
+    kpis.find(([label]) => label.toLowerCase().includes('prior'))?.[1] ?? 0,
+  );
+  let formulaStatus = 'Calculated values were saved. Reapply and save the formula to update newly added rows.';
+  if (dirtyRows.length) formulaStatus = 'Save pending row edits to update their calculated NOV values.';
+  if (formulaPending) formulaStatus = 'Formula changes alone do not enable Save. Saving an edited row will also update NOV for every row in this template, including filtered and unloaded rows.';
+  const inlineRowContext = useMemo(
+    () => ({
+      onInlineRowChange: handleInlineRowChange,
+      onInlineRowPaste: handleInlineRowPaste,
+      onInlineRowsPaste: handleInlineRowsPaste,
+      onRemoveInlineRow: removeInlineRow,
+      isInlineRowSaving: isSaving,
+    }),
+    [handleInlineRowChange, handleInlineRowPaste, handleInlineRowsPaste, isSaving, removeInlineRow, formulaFields],
+  );
+  let bulkSelectedTitle = 'Select rows, or tick the header checkbox to select every loaded row';
+  if (selectedCount > 0) bulkSelectedTitle = 'Set one NOV or DEC value on the selected rows';
+  if (dirtyRows.length > 0) bulkSelectedTitle = 'Save pending changes before a bulk update';
   return (
-    <>
+    <div
+      className="forecast-dashboard forecast-detail-dashboard"
+      ref={dashboardRef}
+    >
+      {(isMetadataLoading || isGridLoading || isSaving || isExporting) && (
+        <output className="api-loading-overlay" aria-live="polite">
+          <span className="api-loading-card">
+            <span className="loading-spinner" aria-hidden="true" />
+            {isSaving
+              ? 'Saving forecast…'
+              : isExporting
+                ? 'Preparing forecast download…'
+                : isGridLoading
+                  ? 'Loading more forecast data…'
+                  : 'Loading forecast data…'}
+          </span>
+        </output>
+      )}
       {isBulkUpdateOpen && (
         <BulkUpdatePanel
-          selectedCount={selectedCount}
+          selectedCount={totalRowCount}
           onApply={applyBulkUpdate}
           onClose={() => setIsBulkUpdateOpen(false)}
+          {...(compiledFormula ? { fields: BULK_FIELDS_WITHOUT_NOV } : {})}
+        />
+      )}
+      {isBulkUpdateSelectedOpen && (
+        <BulkUpdatePanel
+          title="Bulk update selected rows"
+          description={`Apply one value to ${selectedCount.toLocaleString()} selected row(s). Only rows that are loaded in the grid can be selected.`}
+          selectedCount={selectedCount}
+          fields={compiledFormula ? SELECTED_BULK_FIELDS_WITHOUT_NOV : SELECTED_BULK_FIELDS}
+          onApply={applyBulkUpdateSelected}
+          onClose={() => setIsBulkUpdateSelectedOpen(false)}
+        />
+      )}
+      {isFormulaOpen && (
+        <NovFormulaDialog formula={formula} fields={formulaFields} onApply={applyNovFormula} onClose={() => setIsFormulaOpen(false)} />
+      )}
+      {isCreateViewOpen && (
+        <CreateForecastViewPanel
+          columns={columnDefs}
+          initialColumnIds={visibleColumnIds}
+          onClose={() => setIsCreateViewOpen(false)}
+          onSave={saveCustomView}
+        />
+      )}
+      {isRequiredDimensionsOpen && (
+        <RequiredDimensionsDialog
+          error={requiredDimensionsError}
+          isLoading={isRequiredDimensionsLoading}
+          onClose={() => setIsRequiredDimensionsOpen(false)}
+          values={requiredDimensions}
         />
       )}
       {isAddRowOpen && (
@@ -196,73 +1479,393 @@ export default function ForecastPage() {
           onComplete={handleRowCreated}
         />
       )}
-      <div className="page-heading">
-        <div>
-          <h1>{decodedName}</h1>
+      <div className="forecast-page-heading">
+        <div className="forecast-title-group">
+          <Link className="back-to-library" to="/">
+            <span aria-hidden="true">←</span> Back to Library
+          </Link>
+          <div className="forecast-title">
+            <h1>{decodedName}</h1>
+            {metadata?.status && (
+              <span className="status-pill">{metadata.status}</span>
+            )}
+          </div>
           <p>
-            {metadata?.version} • {metadata?.status} •{' '}
+            {metadata?.version ?? 'Forecast'} forecast
+            <span aria-hidden="true"> | </span>
             {totalRowCount.toLocaleString()} records
           </p>
         </div>
-        <div className="actions">
-          <button onClick={() => setIsAddRowOpen(true)}>Add row</button>
-          <button onClick={duplicateSelected}>Duplicate</button>
-          <button
-            disabled={!selectedCount}
-            onClick={() => setIsBulkUpdateOpen(true)}
+        <div className="forecast-heading-actions">          
+          <details
+            className="view-selector"
+            onToggle={(event) => setIsViewMenuOpen(event.currentTarget.open)}
+            open={isViewMenuOpen}
           >
-            Bulk update ({selectedCount})
-          </button>
-          <button onClick={resetLayout}>Reset layout</button>
-          <button onClick={() => forecastService.exportRows(decodedName)}>
-            Export
+            <summary aria-label="Select forecast view">
+              ▤ &nbsp;{' '}
+              {activeLayoutView === 'summary'
+                ? 'Summarized by FSI, Region'
+                : (customViews.find((view) => view.id === activeLayoutView)
+                    ?.name ?? 'Detail View')}
+              <span aria-hidden="true">⌄</span>
+            </summary>
+            <div className="view-selector-menu">
+              <button
+                className="view-option"
+                onClick={() => {
+                  setViewMode('detail');
+                  applyLayoutView('full');
+                }}
+                type="button"
+              >
+                <span>▤ &nbsp; Detail View (Full)</span>
+                {activeLayoutView === 'full' && (
+                  <span className="active-view-badge">Active</span>
+                )}
+              </button>
+              <button
+                className="view-option"
+                onClick={() => {
+                  setViewMode('detail');
+                  applyLayoutView('summary');
+                }}
+                type="button"
+              >
+                <span>▤ &nbsp; Summarized by FSI, Region</span>
+                {activeLayoutView === 'summary' && (
+                  <span className="active-view-badge">Active</span>
+                )}
+              </button>
+              {customViews.map((view) => (
+                <button
+                  className="view-option"
+                  key={view.id}
+                  onClick={() => {
+                    setViewMode('detail');
+                    applyLayoutView(view.id, view.columnIds);
+                  }}
+                  type="button"
+                >
+                  <span>▤ &nbsp; {view.name}</span>
+                  {activeLayoutView === view.id && (
+                    <span className="active-view-badge">Active</span>
+                  )}
+                </button>
+              ))}
+              <button
+                className="view-option create-view-option"
+                onClick={() => {
+                  setIsViewMenuOpen(false);
+                  setIsCreateViewOpen(true);
+                }}
+                type="button"
+              >
+                ＋ Create New View
+              </button>
+            </div>
+          </details>        
+            
+          <button
+            aria-label="Download forecast"
+            className="icon-action"
+            disabled={isExporting}
+            onClick={handleExport}
+            title={isExporting ? 'Preparing forecast download' : 'Download forecast'}
+            type="button"
+          >
+            {isExporting ? '…' : '↓'}
           </button>
           <button
             className="primary"
-            disabled={!dirtyRows.length}
+            disabled={
+              (!dirtyRows.length && !inlineRowValues.length) ||
+              !inlineRowsComplete ||
+              isSaving ||
+              Boolean(formula && !compiledFormula)
+            }
             onClick={save}
+            type="button"
           >
-            Save {dirtyRows.length || ''}
+            {isSaving ? 'Saving…' : `Save${pendingSaveCount ? ` (${pendingSaveCount})` : ''}`}
+          </button>
+          <button
+            className="submit-forecast-button"
+            onClick={() =>
+              setMessage('EPM submission is not configured in this workspace.')
+            }
+            type="button"
+            style={{ display: 'none' }}
+          >
+            Summarize &amp; Submit to EPM
           </button>
         </div>
       </div>
-      {metadata && (
-        <div className="kpis">
-          {Object.entries(metadata.kpis).map(([label, value]) => (
-            <div className="kpi" key={label}>
-              <small>{label}</small>
-              <strong>{Number(value).toLocaleString()}</strong>
-            </div>
-          ))}
+      <section
+        aria-label="Forecast summary"
+        className="forecast-kpi-panel"
+        id="forecast-kpis"
+      >
+        <div className="forecast-kpis">
+          {kpis.map(([label, value], index) => {
+            const isVariance = label.toLowerCase().includes('variance');
+            const numericValue = Number(value);
+            const description = isVariance
+              ? priorForecast
+                ? `${((numericValue / priorForecast) * 100).toFixed(1)}% vs Prior`
+                : 'Compared with prior forecast'
+              : label.toLowerCase().includes('prior')
+                ? 'Previous forecast period'
+                : `${totalRowCount.toLocaleString()} records`;
+            return (
+              <article className="forecast-kpi-card" key={label}>
+                <div>
+                  <span>{label}</span>
+                  <strong>
+                    {isVariance && numericValue > 0 ? '+' : ''}
+                    {currency.format(numericValue)}
+                  </strong>
+                  <small>{description}</small>
+                </div>
+                <span
+                  aria-hidden="true"
+                  className={`forecast-kpi-icon forecast-kpi-icon-${index}`}
+                >
+                  {index === 0 ? '▥' : index === 1 ? '⌁' : '☷'}
+                </span>
+              </article>
+            );
+          })}
         </div>
-      )}
+      </section>
       {message && <div className="notice">{message}</div>}
-      <div className="panel grid-panel">
-        <div className="ag-theme-quartz grid" onPaste={handlePaste}>
-          <AgGridReact
-            theme="legacy"
-            columnDefs={columnDefs}
-            defaultColDef={defaultColDef}
-            rowModelType="infinite"
-            datasource={datasource}
-            cacheBlockSize={CACHE_BLOCK_SIZE}
-            maxBlocksInCache={5}
-            pagination
-            paginationPageSize={PAGE_SIZE}
-            paginationPageSizeSelector={[50, 100, 200]}
-            getRowId={({ data }) => String(data.UNIQ_ID)}
-            rowSelection={{ mode: 'multiRow', headerCheckbox: false }}
-            stopEditingWhenCellsLoseFocus
-            suppressDragLeaveHidesColumns
-            onGridReady={handleGridReady}
-            onCellValueChanged={handleCellValueChanged}
-            onSelectionChanged={({ api }) =>
-              setSelectedCount(api.getSelectedRows().length)
-            }
-            onColumnMoved={handleColumnMoved}
-          />
-        </div>
-      </div>
-    </>
+      {viewMode === 'detail' && (
+        <section
+          aria-labelledby="forecast-template-title"
+          className="grid-card"
+        >
+          <div className="grid-toolbar">
+            <div className="grid-title-group">
+              <h2 id="forecast-template-title">
+                {activeLayoutView === 'summary'
+                  ? 'Summarized by FSI, Region'
+                  : 'Forecast Template'}
+              </h2>
+              <span>{totalRowCount.toLocaleString()} Records</span>
+            </div>
+            <div className="grid-toolbar-actions">
+              {activeLayoutView !== 'summary' && (
+                <>
+                  <details
+                    className="field-picker"
+                    onToggle={(event) =>
+                      setIsFieldPickerOpen(event.currentTarget.open)
+                    }
+                    open={isFieldPickerOpen}
+                  >
+                    <summary>☷ &nbsp; Select Fields</summary>
+                    <div className="field-picker-menu">
+                      {columnDefs.filter((column) => !column.hide).map((column) => (
+                        <label key={column.colId}>
+                          <input
+                            checked={visibleColumnIds.includes(column.colId)}
+                            onChange={(event) =>
+                              handleFieldToggle(
+                                column.colId,
+                                event.target.checked,
+                              )
+                            }
+                            type="checkbox"
+                          />
+                          {column.headerName}
+                        </label>
+                      ))}
+                    </div>
+                  </details>
+                  <button
+                    onClick={() => setIsFormulaOpen(true)}
+                    type="button"
+                  >
+                    {formula ? 'Edit NOV formula' : 'Set NOV formula'}
+                  </button>
+                  <button
+                    className="insert-row-button"
+                    disabled={isSaving}
+                    onClick={openInlineRow}
+                    type="button"
+                  >
+                    <span aria-hidden="true">＋</span> Add New Row
+                  </button>
+                  <button
+                    className="insert-row-button"
+                    onClick={() => setIsAddRowOpen(true)}
+                    type="button"
+                    style={{ display: 'none' }}
+                  >
+                    <span aria-hidden="true">＋</span> Insert Row
+                  </button>
+                  <button
+                    disabled={!selectedCount || isSaving || dirtyRows.length > 0}
+                    onClick={() => setIsBulkUpdateSelectedOpen(true)}
+                    title={bulkSelectedTitle}
+                    type="button"
+                  >
+                    Bulk update selected ({selectedCount.toLocaleString()})
+                  </button>
+                </>
+              )}
+              <details className="more-actions">
+                <summary>More</summary>
+                <div className="more-actions-menu">
+                  {activeLayoutView !== 'summary' && (
+                    <>
+                      <button onClick={duplicateSelected} type="button">
+                        Duplicate selected row
+                      </button>
+                      <button
+                        disabled={!totalRowCount || isSaving || Boolean(formula)}
+                        title={
+                          formula
+                            ? 'Remove the NOV formula before copying prior forecast values'
+                            : 'Copy NOV/DEC Prior Forecast into NOV/DEC Forecast for all records'
+                        }
+                        onClick={copyPriorForecastToForecast}
+                        type="button"
+                      >
+                        Copy prior forecast to forecast ({totalRowCount.toLocaleString()})
+                      </button>
+                      <button
+                        disabled={!totalRowCount || isSaving || dirtyRows.length > 0}
+                        title={dirtyRows.length > 0 ? 'Save pending changes before a bulk update' : undefined}
+                        onClick={() => setIsBulkUpdateOpen(true)}
+                        type="button"
+                      >
+                        Bulk update all ({totalRowCount.toLocaleString()})
+                      </button>
+                    </>
+                  )}
+                  <button onClick={resetLayout} type="button">
+                    Reset layout
+                  </button>
+                  <button disabled={isExporting} onClick={handleExport} type="button">
+                    {isExporting ? 'Exporting…' : 'Export forecast'}
+                  </button>
+                </div>
+              </details>
+            </div>
+          </div>
+          {activeLayoutView !== 'summary' && formula && (
+            <output className="nov-formula-notice">
+              {compiledFormula
+                ? `NOV formula: ${formula}. ${formulaStatus} Sorting and filtering NOV are unavailable. The formula itself is stored only in this browser.`
+                : 'The saved NOV formula is invalid or references unavailable fields. Edit or remove it to restore the calculated preview.'}
+            </output>
+          )}
+          <div
+            className="ag-theme-quartz grid"
+            onContextMenu={handleGridContextMenu}
+            onCopy={handleCopy}
+            onCut={handleCut}
+            onPaste={handlePaste}
+          >
+            <ForecastGrid
+              key={activeLayoutView === 'summary' ? 'summary' : 'detail'}
+              dimensionScroll={activeLayoutView !== 'summary'}
+              theme="legacy"
+              columnDefs={
+                activeLayoutView === 'summary'
+                  ? SUMMARY_COLUMN_DEFS
+                  : columnDefs
+              }
+              defaultColDef={defaultColDef}
+              context={inlineRowContext}
+              pinnedTopRowData={
+                activeLayoutView !== 'summary' && isInlineRowOpen && inlineRowValues
+                  ? inlineRowValues
+                  : []
+              }
+              rowModelType="infinite"
+              datasource={
+                activeLayoutView === 'summary' ? summaryDatasource : datasource
+              }
+              cacheBlockSize={CACHE_BLOCK_SIZE}
+              maxBlocksInCache={400}
+              cacheOverflowSize={1}
+              maxConcurrentDatasourceRequests={2}
+              blockLoadDebounceMillis={120}
+              infiniteInitialRowCount={PAGE_SIZE}
+              getRowId={({ data }) =>
+                data.__INLINE_NEW_ROW
+                  ? `inline-new-forecast-row-${data.__INLINE_NEW_ROW_ID}`
+                  : String(
+                      data.UNIQ_ID ??
+                        `${data.FSI_ACCOUNT ?? ''}:${data.GEOGRAPHY ?? ''}`,
+                    )
+              }
+              rowClassRules={{
+                'recently-updated-row': ({ data }) =>
+                  Boolean(data?.__recentlyUpdated || data?.INSERTED === 'Y'),
+              }}
+              rowSelection={
+                activeLayoutView === 'summary'
+                  ? undefined
+                  : {
+                      mode: 'multiRow',
+                      headerCheckbox: false,
+                      selectAll: 'currentPage',
+                    }
+              }
+              selectionColumnDef={{ headerComponent: SelectAllRowsHeader, pinned: 'left', lockPinned: true }}
+              readOnlyEdit={activeLayoutView === 'summary'}
+              stopEditingWhenCellsLoseFocus
+              suppressDragLeaveHidesColumns
+              alwaysShowHorizontalScroll
+              onGridReady={handleGridReady}
+              onCellValueChanged={
+                activeLayoutView === 'summary'
+                  ? undefined
+                  : handleCellValueChanged
+              }
+              onSelectionChanged={({ api }) =>
+                setSelectedCount(api.getSelectedRows().length)
+              }
+              onColumnMoved={handleColumnMoved}
+              onColumnVisible={handleColumnVisible}
+            />
+            {clipboardMenu && (
+              <div
+                aria-label="Clipboard actions"
+                className="forecast-clipboard-menu"
+                role="menu"
+                style={{ left: clipboardMenu.left, top: clipboardMenu.top }}
+              >
+                <button
+                  onClick={cutFromContextMenu}
+                  role="menuitem"
+                  title="Cuts the focused editable cell; rows are not deleted."
+                  type="button"
+                >
+                  Cut
+                </button>
+                <button onClick={() => copyFromContextMenu(false)} role="menuitem" type="button">
+                  Copy
+                </button>                        
+                <button onClick={pasteFromContextMenu} role="menuitem" type="button">
+                  Paste
+                </button>
+                <button onClick={() => copyFromContextMenu(true)} role="menuitem" type="button">
+                  Copy with Headers
+                </button>
+              </div>
+            )}
+          </div>
+          <div className="grid-footer">
+            Showing {totalRowCount.toLocaleString()} records
+            <span>•</span>
+            Select rows to copy them with headers, or focus a cell to copy that column • right-click for clipboard actions
+          </div>
+        </section>
+      )}
+    </div>
   );
 }
