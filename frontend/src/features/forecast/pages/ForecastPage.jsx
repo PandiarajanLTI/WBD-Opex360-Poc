@@ -31,9 +31,35 @@ import {
 } from '../../shared/clipboard';
 const PAGE_SIZE = 300;
 const CACHE_BLOCK_SIZE = PAGE_SIZE;
-const BULK_PAGE_SIZE = 300;
+const BULK_PAGE_SIZE = 1000;
 const BULK_SAVE_BATCH_SIZE = 300;
-const BULK_CONCURRENCY = 3;
+const BULK_CONCURRENCY = 2;
+const BULK_RETRY_COUNT = 3;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const physicalRowKey = (row, occurrence = 0) =>
+  [
+    row.UNIQ_ID, row.ID, row.ALL_DIM_ID, row.TEMPLATE_PRIMARY_KEY, row.COMPANY_CODE,
+    row.COST_CENTER, row.PROFIT_CENTER, row.FSI_ACCOUNT, occurrence,
+  ].map((value) => String(value ?? '')).join('|');
+async function retryBulkRequest(request, attempts = BULK_RETRY_COUNT) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try { return await request(); } catch (error) {
+      lastError = error;
+      if (attempt + 1 < attempts) await sleep(500 * (2 ** attempt));
+    }
+  }
+  throw lastError;
+}
+function decoratePhysicalRows(rows) {
+  const seen = new Map();
+  return rows.map((row) => {
+    const base = physicalRowKey(row);
+    const occurrence = seen.get(base) ?? 0;
+    seen.set(base, occurrence + 1);
+    return { ...row, __physicalRowKey: physicalRowKey(row, occurrence) };
+  });
+}
 const BULK_FIELDS_WITHOUT_NOV = [
   { field: 'DEC_FORECAST', label: 'December Forecast', type: 'number' },
   { field: 'NOTES', label: 'Notes', type: 'text' },
@@ -812,7 +838,7 @@ export default function ForecastPage() {
           const pageResults = await Promise.all(
             requests
               .slice(start, start + BULK_CONCURRENCY)
-              .map((request) => forecastService.queryRows(decodedName, request)),
+              .map((request) => retryBulkRequest(() => forecastService.queryRows(decodedName, request))),
           );
           pageResults.forEach((result) => rows.push(...result.rows));
           setMessage(
@@ -820,8 +846,10 @@ export default function ForecastPage() {
           );
         }
 
-        const uniqueRows = [...new Map(rows.map((row) => [row.UNIQ_ID, row])).values()];
-        const payload = uniqueRows.map((row) => ({ ...row, [field]: value }));
+        if (rows.length !== totalRowCount) {
+          throw new Error(`Expected ${totalRowCount.toLocaleString()} rows but loaded ${rows.length.toLocaleString()}. Nothing was saved; retry the operation.`);
+        }
+        const payload = decoratePhysicalRows(rows).map((row) => ({ ...row, [field]: value }));
         let processed = 0;
 
         for (let start = 0; start < payload.length; start += BULK_SAVE_BATCH_SIZE * BULK_CONCURRENCY) {
@@ -834,7 +862,12 @@ export default function ForecastPage() {
             batches.push(window.slice(offset, offset + BULK_SAVE_BATCH_SIZE));
           }
           await Promise.all(
-            batches.map((batch) => forecastService.saveRows(decodedName, batch)),
+            batches.map((batch) =>
+                retryBulkRequest(() => forecastService.saveRows(
+                  decodedName,
+                  batch.map(({ __physicalRowKey, ...row }) => row),
+                )),
+              ),
           );
           processed += window.length;
           setMessage(
@@ -897,7 +930,7 @@ export default function ForecastPage() {
         const pageResults = await Promise.all(
           requests
             .slice(start, start + BULK_CONCURRENCY)
-            .map((request) => forecastService.queryRows(decodedName, request)),
+            .map((request) => retryBulkRequest(() => forecastService.queryRows(decodedName, request))),
         );
         pageResults.forEach((result) => rows.push(...result.rows));
         setMessage(
@@ -905,13 +938,14 @@ export default function ForecastPage() {
         );
       }
 
-      const uniqueRows = [
-        ...new Map(rows.map((row) => [row.UNIQ_ID, row])).values(),
-      ];
+      if (rows.length !== totalRowCount) {
+        throw new Error(`Expected ${totalRowCount.toLocaleString()} rows but loaded ${rows.length.toLocaleString()}. No prior values were copied; retry the operation.`);
+      }
+      const physicalRows = decoratePhysicalRows(rows);
       const nextDirtyMap = new Map(dirtyRowsRef.current);
 
-      uniqueRows.forEach((sourceRow) => {
-        const existingRow = nextDirtyMap.get(sourceRow.UNIQ_ID);
+      physicalRows.forEach((sourceRow) => {
+        const existingRow = nextDirtyMap.get(sourceRow.__physicalRowKey);
         const row = existingRow ? { ...sourceRow, ...existingRow } : { ...sourceRow };
         // Actual Snowflake schema: NOV_PRIORFORECAST / DEC_PRIORFORECAST.
         // Read from sourceRow so an existing dirty edit cannot hide the source value.
@@ -933,10 +967,10 @@ export default function ForecastPage() {
           ]),
         ];
         row.__editedAt = Date.now();
-        nextDirtyMap.set(row.UNIQ_ID, row);
+        nextDirtyMap.set(row.__physicalRowKey, row);
       });
 
-      const rowsMissingPriorForecast = uniqueRows.filter(
+      const rowsMissingPriorForecast = physicalRows.filter(
         (row) =>
           row.NOV_PRIORFORECAST == null &&
           row.NOV_PRIOR_FORECAST == null &&
@@ -945,7 +979,7 @@ export default function ForecastPage() {
           row.DEC_PRIOR_FORECAST == null &&
           row.DEC_PRIOR == null,
       ).length;
-      if (rowsMissingPriorForecast === uniqueRows.length && uniqueRows.length) {
+      if (rowsMissingPriorForecast === physicalRows.length && physicalRows.length) {
         throw new Error(
           'Prior forecast columns were not returned by the rows API. Expected NOV_PRIORFORECAST/DEC_PRIORFORECAST.',
         );
@@ -955,8 +989,8 @@ export default function ForecastPage() {
       setDirtyMap(new Map(nextDirtyMap));
       // The action has already loaded every record. Reuse those rows locally so an
       // AG Grid scroll does not go back to Snowflake/API for the same blocks.
-      fullyLoadedRowsRef.current = uniqueRows.map(
-        (row) => nextDirtyMap.get(row.UNIQ_ID) ?? row,
+      fullyLoadedRowsRef.current = physicalRows.map(
+        (row) => nextDirtyMap.get(row.__physicalRowKey) ?? row,
       );
       gridRef.current?.api.refreshInfiniteCache?.();
       gridRef.current?.api.refreshCells?.({
@@ -964,7 +998,7 @@ export default function ForecastPage() {
         force: true,
       });
       setMessage(
-        `Copied NOV Prior Forecast to NOV Forecast and DEC Prior Forecast to DEC Forecast for ${uniqueRows.length.toLocaleString()} records. Click Save to persist the changes.`,
+        `Copied NOV Prior Forecast to NOV Forecast and DEC Prior Forecast to DEC Forecast for ${physicalRows.length.toLocaleString()} records. Click Save to persist the changes.`,
       );
     } catch (error) {
       setMessage(`Unable to copy prior forecast values: ${error.message}`);
@@ -1032,9 +1066,23 @@ export default function ForecastPage() {
       } else {
         savePayload = rowsToSave.map(({ __editedFields, __editedAt, __recentlyUpdated, ...row }) => row);
       }
-      const result = savePayload.length
-        ? await forecastService.saveRows(decodedName, savePayload)
-        : { message: 'No forecast rows to update.' };
+      let result = { message: 'No forecast rows to update.' };
+      if (savePayload.length > BULK_SAVE_BATCH_SIZE) {
+        let saved = 0;
+        for (let start = 0; start < savePayload.length; start += BULK_SAVE_BATCH_SIZE) {
+          const batch = savePayload.slice(start, start + BULK_SAVE_BATCH_SIZE)
+            .map(({ __physicalRowKey, ...row }) => row);
+          const batchResult = await retryBulkRequest(() =>
+            forecastService.saveRows(decodedName, batch),
+          );
+          saved += typeof batchResult.saved === 'number' ? batchResult.saved : batch.length;
+          setMessage(`Saved ${saved.toLocaleString()} of ${savePayload.length.toLocaleString()} records…`);
+        }
+        result = { saved, message: `Updated ${saved.toLocaleString()} row(s).` };
+      } else if (savePayload.length) {
+        const batch = savePayload.map(({ __physicalRowKey, ...row }) => row);
+        result = await retryBulkRequest(() => forecastService.saveRows(decodedName, batch));
+      }
       if (result.errors?.length) throw new Error(result.errors.map((error) => error.message).join('; '));
       if (typeof result.saved === 'number' && result.saved !== savePayload.length) {
         throw new Error(`The server saved ${result.saved} of ${savePayload.length} requested rows. Some changes may already be committed; review the template before retrying.`);
