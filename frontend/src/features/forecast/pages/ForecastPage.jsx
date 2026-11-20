@@ -11,6 +11,14 @@ import { createForecastColumns, MONTH_COLUMNS } from '../models/columns';
 import { compileForecastFormula } from '../utils/formula';
 import { buildNovFormulaPayload, calculateDirtyNovRows } from '../utils/saveNovFormula';
 import { mapInlinePaste, mapInlinePasteRows } from '../utils/inlinePaste';
+import {
+  SELECTED_BULK_FIELDS,
+  SELECTED_BULK_FIELDS_WITHOUT_NOV,
+  applySelectedBulkValue,
+  buildSelectedBulkPayload,
+  chunkRows,
+  getSelectedForecastNodes,
+} from '../utils/selectedBulkUpdate';
 import SelectAllRowsHeader from '../../shared/SelectAllRowsHeader';
 import { forecastService } from '../services/forecastService';
 import { createCachedDatasource } from '../../shared/cachedDatasource';
@@ -145,7 +153,6 @@ const currency = new Intl.NumberFormat('en-US', {
   currency: 'USD',
   maximumFractionDigits: 0,
 });
-
 function buildInlineRowPayload({
   values,
   columns,
@@ -165,7 +172,6 @@ function buildInlineRowPayload({
   if (formula && !calculateNov) {
     throw new Error('The NOV formula is invalid. Edit or remove it before saving a new row.');
   }
-
   const row = {
     UNIQ_ID: values.__INLINE_NEW_ROW_ID,
     TEMPLATE_NAME: templateName,
@@ -206,7 +212,6 @@ function buildInlineRowPayload({
   }
   return row;
 }
-
 export default function ForecastPage() {
   const { templateName = '' } = useParams();
   const decodedName = decodeURIComponent(templateName);
@@ -220,6 +225,7 @@ export default function ForecastPage() {
   const recentEditsRef = useRef(new Map());
   const dirtyRowsRef = useRef(new Map());
   const fullyLoadedRowsRef = useRef(null);
+  const datasourceCacheRef = useRef(null);
   const [isGridLoading, setIsGridLoading] = useState(false);
   const [isMetadataLoading, setIsMetadataLoading] = useState(true);
   const [totalRowCount, setTotalRowCount] = useState(0);
@@ -240,6 +246,7 @@ export default function ForecastPage() {
   const [selectedCount, setSelectedCount] = useState(0);
   const [clipboardMenu, setClipboardMenu] = useState(null);
   const [isBulkUpdateOpen, setIsBulkUpdateOpen] = useState(false);
+  const [isBulkUpdateSelectedOpen, setIsBulkUpdateSelectedOpen] = useState(false);
   const [isFormulaOpen, setIsFormulaOpen] = useState(false);
   const [savedFormula, setSavedFormula] = useState(() => ({
     template: decodedName,
@@ -248,13 +255,11 @@ export default function ForecastPage() {
   }));
   const formula = savedFormula.template === decodedName ? savedFormula.value : '';
   const formulaPending = savedFormula.template === decodedName && savedFormula.pending;
-
   useEffect(() => {
     if (!message) return undefined;
     const timeoutId = window.setTimeout(() => setMessage(''), 3000);
     return () => window.clearTimeout(timeoutId);
   }, [message]);
-
   useEffect(() => {
     if (!clipboardMenu) return undefined;
     const dismissMenu = (event) => {
@@ -272,7 +277,6 @@ export default function ForecastPage() {
       document.removeEventListener('keydown', handleMenuKey);
     };
   }, [clipboardMenu]);
-
   const baseColumns = useMemo(() => createForecastColumns(metadata?.columns), [metadata?.columns]);
   const formulaFields = useMemo(
     () => baseColumns.filter((column) => column.type === 'numericColumn').map((column) => column.field),
@@ -347,6 +351,7 @@ export default function ForecastPage() {
     if (!preserveInlineRows) updateInlineRows([]);
     setRowDialogSeed(null);
     setIsBulkUpdateOpen(false);
+    setIsBulkUpdateSelectedOpen(false);
     setIsFormulaOpen(false);
     setIsCreateViewOpen(false);
     setIsRequiredDimensionsOpen(false);
@@ -385,7 +390,7 @@ export default function ForecastPage() {
       mapRows: (rows) => decorateRows(rows, 'UNIQ_ID'),
       getDirtyRow: (row) => dirtyRowsRef.current.get(row.UNIQ_ID),
     });
-
+    datasourceCacheRef.current = cache;
     return {
       getRows: async (params) => {
         trackGridRequest(1);
@@ -411,7 +416,6 @@ export default function ForecastPage() {
           const reachedLastRow =
             result.rows.length < requestedRowCount ||
             loadedEndRow >= result.totalRowCount;
-
           setTotalRowCount(result.totalRowCount);
           params.successCallback(
             result.rows,
@@ -427,7 +431,6 @@ export default function ForecastPage() {
       destroy: () => cache.clear(),
     };
   }, [decodedName]);
-
   const summaryDatasource = useMemo(
     () => ({
       getRows: async (params) => {
@@ -827,7 +830,6 @@ export default function ForecastPage() {
       setIsSaving(true);
       closeTransientUi();
       setMessage(`Preparing bulk update for all ${totalRowCount.toLocaleString()} records…`);
-
       try {
         const requests = [];
         for (let startRow = 0; startRow < totalRowCount; startRow += BULK_PAGE_SIZE) {
@@ -838,7 +840,6 @@ export default function ForecastPage() {
             filterModel: {},
           });
         }
-
         const rows = [];
         for (let start = 0; start < requests.length; start += BULK_CONCURRENCY) {
           const pageResults = await Promise.all(
@@ -851,13 +852,11 @@ export default function ForecastPage() {
             `Loaded ${Math.min(rows.length, totalRowCount).toLocaleString()} of ${totalRowCount.toLocaleString()} records…`,
           );
         }
-
         if (rows.length !== totalRowCount) {
           throw new Error(`Expected ${totalRowCount.toLocaleString()} rows but loaded ${rows.length.toLocaleString()}. Nothing was saved; retry the operation.`);
         }
         const payload = decoratePhysicalRows(rows).map((row) => ({ ...row, [field]: value }));
         let processed = 0;
-
         for (let start = 0; start < payload.length; start += BULK_SAVE_BATCH_SIZE * BULK_CONCURRENCY) {
           const window = payload.slice(
             start,
@@ -880,7 +879,6 @@ export default function ForecastPage() {
             `Updated ${Math.min(processed, payload.length).toLocaleString()} of ${payload.length.toLocaleString()} records…`,
           );
         }
-
         // Every record is already in memory after the bulk load. Keep that snapshot so
         // scrolling does not request the same records again.
         fullyLoadedRowsRef.current = payload;
@@ -900,7 +898,93 @@ export default function ForecastPage() {
     },
     [closeTransientUi, decodedName, isSaving, totalRowCount],
   );
-
+  // Bulk update for the rows that are selected right now (header checkbox = every row
+  // that is loaded in the grid). Nothing is re-fetched: the selected rows already hold the
+  // full record, so they are sent to the same validated save endpoint in batches.
+  const applyBulkUpdateSelected = useCallback(
+    async (field, value) => {
+      if (isSaving) return;
+      const api = gridRef.current?.api;
+      api?.stopEditing?.();
+      if (dirtyRowsRef.current.size) {
+        closeTransientUi();
+        setMessage('Save pending changes before running a bulk update.');
+        return;
+      }
+      if (field === 'NOV_FORECAST' && formula) {
+        closeTransientUi();
+        setMessage('Remove the NOV formula before bulk updating NOV Forecast. The formula calculates NOV on Save.');
+        return;
+      }
+      if (
+        !SELECTED_BULK_FIELDS.some((item) => item.field === field) ||
+        !Number.isFinite(value)
+      ) {
+        setMessage('Choose November or December Forecast and enter a valid number.');
+        return;
+      }
+      const nodes = getSelectedForecastNodes(api);
+      if (!nodes.length) {
+        closeTransientUi();
+        setMessage('Select at least one loaded row before using Bulk update selected.');
+        return;
+      }
+      setIsSaving(true);
+      closeTransientUi();
+      setMessage(`Preparing bulk update for ${nodes.length.toLocaleString()} selected record(s)…`);
+      try {
+        const payload = buildSelectedBulkPayload(nodes, field, value);
+        const slice = BULK_SAVE_BATCH_SIZE * BULK_CONCURRENCY;
+        let processed = 0;
+        for (let start = 0; start < payload.length; start += slice) {
+          const windowRows = payload.slice(start, start + slice);
+          await Promise.all(
+            chunkRows(windowRows, BULK_SAVE_BATCH_SIZE).map(async (batch) => {
+              const result = await retryBulkRequest(() =>
+                forecastService.saveRows(decodedName, batch),
+              );
+              if (result?.errors?.length) {
+                throw new Error(result.errors.map((error) => error.message).join('; '));
+              }
+              if (typeof result?.saved === 'number' && result.saved !== batch.length) {
+                throw new Error(`The server saved ${result.saved} of ${batch.length} requested rows. Some changes may already be committed; review the template before retrying.`);
+              }
+            }),
+          );
+          processed += windowRows.length;
+          setMessage(
+            `Updated ${Math.min(processed, payload.length).toLocaleString()} of ${payload.length.toLocaleString()} selected records…`,
+          );
+        }
+        // Keep the grid and the datasource cache in sync without another server request.
+        applySelectedBulkValue(nodes, field, value);
+        nodes.forEach(({ data }) => {
+          recentEditsRef.current.set(data.UNIQ_ID, {
+            fields: data.__editedFields,
+            updatedAt: Date.now(),
+          });
+        });
+        // Keep the "all rows loaded" snapshot (created by Bulk update all / Copy prior) in sync.
+        if (fullyLoadedRowsRef.current) {
+          const updatedIds = new Set(nodes.map(({ data }) => data.UNIQ_ID));
+          fullyLoadedRowsRef.current.forEach((row) => {
+            if (updatedIds.has(row.UNIQ_ID)) row[field] = value;
+          });
+        }
+        datasourceCacheRef.current?.clear();
+        api?.refreshCells?.({ rowNodes: nodes, columns: [field], force: true });
+        api?.redrawRows?.({ rowNodes: nodes });
+        setMessage(
+          `Bulk update completed. ${field === 'NOV_FORECAST' ? 'November' : 'December'} Forecast was set to ${value} for ${nodes.length.toLocaleString()} selected record(s). The selection was kept so you can update the other month too.`,
+        );
+      } catch (error) {
+        setMessage(`Bulk update stopped: ${error.message}`);
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [closeTransientUi, decodedName, formula, isSaving],
+  );
   const copyPriorForecastToForecast = useCallback(async () => {
     if (isSaving || !totalRowCount) return;
     if (formula) {
@@ -909,13 +993,11 @@ export default function ForecastPage() {
       );
       return;
     }
-
     setIsSaving(true);
     closeTransientUi();
     setMessage(
       `Preparing prior forecast values for all ${totalRowCount.toLocaleString()} records…`,
     );
-
     try {
       const requests = [];
       for (
@@ -930,7 +1012,6 @@ export default function ForecastPage() {
           filterModel: {},
         });
       }
-
       const rows = [];
       for (let start = 0; start < requests.length; start += BULK_CONCURRENCY) {
         const pageResults = await Promise.all(
@@ -943,13 +1024,11 @@ export default function ForecastPage() {
           `Loaded ${Math.min(rows.length, totalRowCount).toLocaleString()} of ${totalRowCount.toLocaleString()} records…`,
         );
       }
-
       if (rows.length !== totalRowCount) {
         throw new Error(`Expected ${totalRowCount.toLocaleString()} rows but loaded ${rows.length.toLocaleString()}. No prior values were copied; retry the operation.`);
       }
       const physicalRows = decoratePhysicalRows(rows);
       const nextDirtyMap = new Map(dirtyRowsRef.current);
-
       physicalRows.forEach((sourceRow) => {
         const existingRow = nextDirtyMap.get(sourceRow.__physicalRowKey);
         const row = existingRow ? { ...sourceRow, ...existingRow } : { ...sourceRow };
@@ -975,7 +1054,6 @@ export default function ForecastPage() {
         row.__editedAt = Date.now();
         nextDirtyMap.set(row.__physicalRowKey, row);
       });
-
       const rowsMissingPriorForecast = physicalRows.filter(
         (row) =>
           row.NOV_PRIORFORECAST == null &&
@@ -990,7 +1068,6 @@ export default function ForecastPage() {
           'Prior forecast columns were not returned by the rows API. Expected NOV_PRIORFORECAST/DEC_PRIORFORECAST.',
         );
       }
-
       dirtyRowsRef.current = nextDirtyMap;
       setDirtyMap(new Map(nextDirtyMap));
       // The action has already loaded every record. Reuse those rows locally so an
@@ -1018,7 +1095,6 @@ export default function ForecastPage() {
     isSaving,
     totalRowCount,
   ]);
-
   const save = async () => {
     gridRef.current?.api.stopEditing?.();
     let inlineRowsToSave = [];
@@ -1332,6 +1408,9 @@ export default function ForecastPage() {
     }),
     [handleInlineRowChange, handleInlineRowPaste, handleInlineRowsPaste, isSaving, removeInlineRow, formulaFields],
   );
+  let bulkSelectedTitle = 'Select rows, or tick the header checkbox to select every loaded row';
+  if (selectedCount > 0) bulkSelectedTitle = 'Set one NOV or DEC value on the selected rows';
+  if (dirtyRows.length > 0) bulkSelectedTitle = 'Save pending changes before a bulk update';
   return (
     <div
       className="forecast-dashboard forecast-detail-dashboard"
@@ -1357,6 +1436,16 @@ export default function ForecastPage() {
           onApply={applyBulkUpdate}
           onClose={() => setIsBulkUpdateOpen(false)}
           {...(compiledFormula ? { fields: BULK_FIELDS_WITHOUT_NOV } : {})}
+        />
+      )}
+      {isBulkUpdateSelectedOpen && (
+        <BulkUpdatePanel
+          title="Bulk update selected rows"
+          description={`Apply one value to ${selectedCount.toLocaleString()} selected row(s). Only rows that are loaded in the grid can be selected.`}
+          selectedCount={selectedCount}
+          fields={compiledFormula ? SELECTED_BULK_FIELDS_WITHOUT_NOV : SELECTED_BULK_FIELDS}
+          onApply={applyBulkUpdateSelected}
+          onClose={() => setIsBulkUpdateSelectedOpen(false)}
         />
       )}
       {isFormulaOpen && (
@@ -1407,8 +1496,7 @@ export default function ForecastPage() {
             {totalRowCount.toLocaleString()} records
           </p>
         </div>
-        <div className="forecast-heading-actions">
-        
+        <div className="forecast-heading-actions">          
           <details
             className="view-selector"
             onToggle={(event) => setIsViewMenuOpen(event.currentTarget.open)}
@@ -1476,9 +1564,8 @@ export default function ForecastPage() {
                 ＋ Create New View
               </button>
             </div>
-          </details>
-        
-          
+          </details>        
+            
           <button
             aria-label="Download forecast"
             className="icon-action"
@@ -1617,6 +1704,14 @@ export default function ForecastPage() {
                   >
                     <span aria-hidden="true">＋</span> Insert Row
                   </button>
+                  <button
+                    disabled={!selectedCount || isSaving || dirtyRows.length > 0}
+                    onClick={() => setIsBulkUpdateSelectedOpen(true)}
+                    title={bulkSelectedTitle}
+                    type="button"
+                  >
+                    Bulk update selected ({selectedCount.toLocaleString()})
+                  </button>
                 </>
               )}
               <details className="more-actions">
@@ -1627,7 +1722,6 @@ export default function ForecastPage() {
                       <button onClick={duplicateSelected} type="button">
                         Duplicate selected row
                       </button>
-
                       <button
                         disabled={!totalRowCount || isSaving || Boolean(formula)}
                         title={
@@ -1755,8 +1849,7 @@ export default function ForecastPage() {
                 </button>
                 <button onClick={() => copyFromContextMenu(false)} role="menuitem" type="button">
                   Copy
-                </button>      
-                
+                </button>                        
                 <button onClick={pasteFromContextMenu} role="menuitem" type="button">
                   Paste
                 </button>

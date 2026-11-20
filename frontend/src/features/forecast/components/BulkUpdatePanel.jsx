@@ -11,11 +11,14 @@ export default function BulkUpdatePanel({
   onApply,
   onClose,
   fields = BULK_EDITABLE_FIELDS,
+  title = 'Bulk update',
+  description,
+  applyLabel = 'Apply to rows',
 }) {
   const [field, setField] = useState(fields[0].field);
   const [value, setValue] = useState('');
   const selectedField = useMemo(
-    () => fields.find((item) => item.field === field),
+    () => fields.find((item) => item.field === field) ?? fields[0],
     [fields, field],
   );
 
@@ -23,7 +26,7 @@ export default function BulkUpdatePanel({
     event.preventDefault();
     const normalizedValue =
       selectedField.type === 'number' ? Number(value) : value;
-    onApply(field, normalizedValue);
+    onApply(selectedField.field, normalizedValue);
   }
 
   return (
@@ -35,13 +38,15 @@ export default function BulkUpdatePanel({
         aria-labelledby="bulk-update-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <h2 id="bulk-update-title">Bulk update</h2>
-        <p>Apply one value to {selectedCount} selected row(s).</p>
+        <h2 id="bulk-update-title">{title}</h2>
+        <p>
+          {description ?? `Apply one value to ${selectedCount} selected row(s).`}
+        </p>
         <form onSubmit={handleSubmit}>
           <label htmlFor="bulk-field">Field</label>
           <select
             id="bulk-field"
-            value={field}
+            value={selectedField.field}
             onChange={(event) => setField(event.target.value)}
           >
             {fields.map((item) => (
@@ -63,7 +68,7 @@ export default function BulkUpdatePanel({
               Cancel
             </button>
             <button className="primary" type="submit">
-              Apply to rows
+              {applyLabel}
             </button>
           </div>
         </form>
