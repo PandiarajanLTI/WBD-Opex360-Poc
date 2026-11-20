@@ -974,8 +974,12 @@ export default function ForecastPage() {
         datasourceCacheRef.current?.clear();
         api?.refreshCells?.({ rowNodes: nodes, columns: [field], force: true });
         api?.redrawRows?.({ rowNodes: nodes });
+        // The update succeeded: uncheck every row checkbox, including the header checkbox
+        // (it listens to selectionChanged), and reset the "Bulk update selected (n)" counter.
+        api?.deselectAll?.();
+        setSelectedCount(0);
         setMessage(
-          `Bulk update completed. ${field === 'NOV_FORECAST' ? 'November' : 'December'} Forecast was set to ${value} for ${nodes.length.toLocaleString()} selected record(s). The selection was kept so you can update the other month too.`,
+          `Bulk update completed. ${field === 'NOV_FORECAST' ? 'November' : 'December'} Forecast was set to ${value} for ${nodes.length.toLocaleString()} selected record(s). The selection was cleared.`,
         );
       } catch (error) {
         setMessage(`Bulk update stopped: ${error.message}`);
@@ -1564,8 +1568,7 @@ export default function ForecastPage() {
                 ＋ Create New View
               </button>
             </div>
-          </details>        
-            
+          </details>                    
           <button
             aria-label="Download forecast"
             className="icon-action"
