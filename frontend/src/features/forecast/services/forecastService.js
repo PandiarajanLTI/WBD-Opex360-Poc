@@ -1,11 +1,8 @@
 import { apiJson, apiRequest } from '../../../services/api/apiClient';
-
 const inFlightRequests = new Map();
-
 function shareInFlightRequest(key, request) {
   const existing = inFlightRequests.get(key);
   if (existing) return existing;
-
   const pending = Promise.resolve().then(request);
   inFlightRequests.set(key, pending);
   pending.finally(() => {
@@ -13,7 +10,6 @@ function shareInFlightRequest(key, request) {
   }).catch(() => {});
   return pending;
 }
-
 export const forecastService = {
   getMetadata: (name) => {
     const url = `/templates/${encodeURIComponent(name)}/metadata`;
@@ -42,6 +38,13 @@ export const forecastService = {
     apiJson(`/templates/${encodeURIComponent(name)}/rows/save`, {
       method: 'POST',
       body: JSON.stringify({ rows }),
+    }),
+  // Bulk update all: ONE PATCH, the server updates every row of the template with a single
+  // UPDATE. Not shared/de-duplicated like the read calls because it changes data.
+  bulkUpdateField: (name, { field, value }) =>
+    apiJson(`/templates/${encodeURIComponent(name)}/rows/bulk-update`, {
+      method: 'PATCH',
+      body: JSON.stringify({ field, value }),
     }),
   exportRows: async (name) => {
     const response = await apiRequest(

@@ -2,6 +2,7 @@ import csv, io, time
 from fastapi import APIRouter, Depends, HTTPException, Response
 from app.api.dependencies import get_forecast_service, get_repository
 from app.schemas.grid import GridQuery, GridResponse, RowsPayload
+from app.schemas.bulk import BulkFieldUpdate
 from app.schemas.templates import TemplateCreatePayload, TemplateUploadPayload
 from app.services.forecast_service import ForecastService
 router = APIRouter(prefix="/api")
@@ -34,6 +35,19 @@ def save_rows(template_name: str, payload: RowsPayload, service: ForecastService
     result=service.save(template_name,payload.rows)
     if result["errors"]: raise HTTPException(status_code=422, detail=result["errors"])
     return result
+@router.patch("/templates/{template_name}/rows/bulk-update", responses={422: {"description": "Invalid field/value, or no row can be updated (no CURRENCY / FX rate)."}})
+def bulk_update_rows(template_name: str, payload: BulkFieldUpdate, repository=Depends(get_repository)):
+    # Set one editable field to one value on every row of the template with a single UPDATE.
+    # Rows without a usable CURRENCY / PRATE FX rate are skipped and listed in the response.
+    started=time.perf_counter()
+    try:
+        payload.ensure_finite()
+        result=repository.bulk_update_field(template_name,payload.field,payload.value)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    message=f"Updated {payload.field} on {result['updated']} row(s)."
+    if result["skipped"]: message+=f" Skipped {result['skipped']} row(s) without a usable CURRENCY / PRATE FX rate."
+    return {"template":template_name,"field":payload.field,**result,"elapsedMs":round((time.perf_counter()-started)*1000,2),"message":message}
 @router.get("/templates/{template_name}/dimensions")
 def dimensions(template_name: str, parentField: str|None=None, parentValue: str|None=None): return {"values":[]}
 @router.post("/templates/{template_name}/actions/{action_name}")

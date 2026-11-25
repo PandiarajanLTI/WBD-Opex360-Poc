@@ -3,6 +3,7 @@ from typing import Any
 from app.core.config import Settings
 from app.db.snowflake import SnowflakeConnectionFactory
 from app.repositories.query_builder import ALLOWED_COLUMNS,API_COLUMNS,COLUMN_GROUPS,DEFAULT_COLUMNS,TEMPLATE_COLUMNS,VIRTUAL_COLUMNS,build_grid_query
+from app.repositories.bulk_update import build_bulk_update,summarize_skipped
 FORECAST_EDITABLE={"NOV_FORECAST","DEC_FORECAST","NOTES"}
 class SnowflakeForecastRepository:
  def __init__(self,settings:Settings,factory:SnowflakeConnectionFactory):self.settings,self.factory=settings,factory
@@ -78,6 +79,25 @@ class SnowflakeForecastRepository:
     connection.commit()
    except Exception:connection.rollback();raise
   return {'requested':len(rows),'updated':updated,'inserted':inserted}
+ def bulk_update_field(self,template_name,field,value):
+  # Bulk update all: ONE UPDATE for the whole template (no row download, no save batches).
+  # Rows with a blank CURRENCY or no PRATE FX rate cannot get a PRATE value: they are skipped and
+  # reported (so one bad row cannot block the rest). Returns {"updated","skipped","skippedReasons","skippedIds"}.
+  s=self.settings
+  built=build_bulk_update(s.snowflake_forecast_table,s.snowflake_currency_table,template_name,field,value,s.snowflake_fx_rate_type,s.snowflake_fx_year)
+  skipped=0;reasons=[];ids=[]
+  with self.factory.connection() as connection:
+   try:
+    with connection.cursor() as cursor:
+     if built.skipped_sql:
+      cursor.execute(built.skipped_sql,built.skipped_params);skipped,reasons=summarize_skipped(cursor.fetchall())
+      if skipped:cursor.execute(built.sample_sql,built.skipped_params);ids=[r[0] for r in cursor.fetchall()]
+     cursor.execute(built.update_sql,built.update_params);count=cursor.rowcount
+     updated=count if isinstance(count,int) and count>=0 else None
+     if skipped and updated==0:raise ValueError(f"None of the {skipped} record(s) could be updated: "+"; ".join(reasons)+". No records were changed.")
+    connection.commit()
+   except Exception:connection.rollback();raise
+  return {"updated":updated,"skipped":skipped,"skippedReasons":reasons,"skippedIds":ids}
  def budget_query(self,request):
   rows=self._fetch(f"SELECT *,COUNT(*) OVER() __TOTAL_COUNT FROM {self.settings.snowflake_budget_table} ORDER BY COSTCENTER LIMIT %(l)s OFFSET %(o)s",{'l':request.endRow-request.startRow,'o':request.startRow});total=int(rows[0].pop('__TOTAL_COUNT')) if rows else 0;return rows,total
  def budget_save(self,rows):

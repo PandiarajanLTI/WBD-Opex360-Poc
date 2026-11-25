@@ -21,6 +21,11 @@ import {
 } from '../utils/selectedBulkUpdate';
 import SelectAllRowsHeader from '../../shared/SelectAllRowsHeader';
 import { forecastService } from '../services/forecastService';
+import {
+  bulkUpdateAllFilterWarning,
+  bulkUpdateAllMessage,
+  validateBulkUpdateAll,
+} from '../utils/bulkUpdateAll';
 import { createCachedDatasource } from '../../shared/cachedDatasource';
 import {
   limitPinnedDescriptorColumns,
@@ -257,7 +262,9 @@ export default function ForecastPage() {
   const formulaPending = savedFormula.template === decodedName && savedFormula.pending;
   useEffect(() => {
     if (!message) return undefined;
-    const timeoutId = window.setTimeout(() => setMessage(''), 3000);
+    // A bulk update that skipped rows lists them (UNIQ_ID, reason): keep that visible longer.
+    const visibleMs = message.includes('were skipped') ? 12000 : 3000;
+    const timeoutId = window.setTimeout(() => setMessage(''), visibleMs);
     return () => window.clearTimeout(timeoutId);
   }, [message]);
   useEffect(() => {
@@ -824,72 +831,41 @@ export default function ForecastPage() {
     });
     setMessage(`Added ${mappedRows.length} pasted row(s). Complete required fields, then Save.`);
   }, [columnDefs, decodedName, metadata?.version, updateInlineRows]);
+  // Bulk update all: ONE PATCH. The server sets the field on every row of the template with a
+  // single UPDATE (PRATE and the audit columns included), so no rows are downloaded and no
+  // rows/save batches are sent.
   const applyBulkUpdate = useCallback(
     async (field, value) => {
       if (isSaving || !totalRowCount) return;
+      const invalid = validateBulkUpdateAll(field, value);
+      if (invalid) {
+        setMessage(invalid);
+        return;
+      }
+      const api = gridRef.current?.api;
+      api?.stopEditing?.();
+      const hasActiveFilter = Object.keys(api?.getFilterModel?.() ?? {}).length > 0;
+      if (hasActiveFilter && !window.confirm(bulkUpdateAllFilterWarning(totalRowCount))) {
+        closeTransientUi();
+        setMessage('Bulk update cancelled. No records were changed.');
+        return;
+      }
       setIsSaving(true);
       closeTransientUi();
-      setMessage(`Preparing bulk update for all ${totalRowCount.toLocaleString()} records…`);
+      setMessage('Updating all records in a single request…');
       try {
-        const requests = [];
-        for (let startRow = 0; startRow < totalRowCount; startRow += BULK_PAGE_SIZE) {
-          requests.push({
-            startRow,
-            endRow: Math.min(startRow + BULK_PAGE_SIZE, totalRowCount),
-            sortModel: [],
-            filterModel: {},
-          });
-        }
-        const rows = [];
-        for (let start = 0; start < requests.length; start += BULK_CONCURRENCY) {
-          const pageResults = await Promise.all(
-            requests
-              .slice(start, start + BULK_CONCURRENCY)
-              .map((request) => retryBulkRequest(() => forecastService.queryRows(decodedName, request))),
-          );
-          pageResults.forEach((result) => rows.push(...result.rows));
-          setMessage(
-            `Loaded ${Math.min(rows.length, totalRowCount).toLocaleString()} of ${totalRowCount.toLocaleString()} records…`,
-          );
-        }
-        if (rows.length !== totalRowCount) {
-          throw new Error(`Expected ${totalRowCount.toLocaleString()} rows but loaded ${rows.length.toLocaleString()}. Nothing was saved; retry the operation.`);
-        }
-        const payload = decoratePhysicalRows(rows).map((row) => ({ ...row, [field]: value }));
-        let processed = 0;
-        for (let start = 0; start < payload.length; start += BULK_SAVE_BATCH_SIZE * BULK_CONCURRENCY) {
-          const window = payload.slice(
-            start,
-            start + BULK_SAVE_BATCH_SIZE * BULK_CONCURRENCY,
-          );
-          const batches = [];
-          for (let offset = 0; offset < window.length; offset += BULK_SAVE_BATCH_SIZE) {
-            batches.push(window.slice(offset, offset + BULK_SAVE_BATCH_SIZE));
-          }
-          await Promise.all(
-            batches.map((batch) =>
-                retryBulkRequest(() => forecastService.saveRows(
-                  decodedName,
-                  batch.map(({ __physicalRowKey, ...row }) => row),
-                )),
-              ),
-          );
-          processed += window.length;
-          setMessage(
-            `Updated ${Math.min(processed, payload.length).toLocaleString()} of ${payload.length.toLocaleString()} records…`,
-          );
-        }
-        // Every record is already in memory after the bulk load. Keep that snapshot so
-        // scrolling does not request the same records again.
-        fullyLoadedRowsRef.current = payload;
+        const result = await forecastService.bulkUpdateField(decodedName, { field, value });
+        // The server recalculates PRATE and UPDATED_TS, so every locally cached copy of the
+        // rows is stale: drop it and let the grid reload the visible blocks.
+        fullyLoadedRowsRef.current = null;
+        datasourceCacheRef.current?.clear();
         dirtyRowsRef.current = new Map();
         setDirtyMap(new Map());
-        gridRef.current?.api.deselectAll?.();
+        api?.deselectAll?.();
         setSelectedCount(0);
-        gridRef.current?.api.refreshInfiniteCache?.();
-        setMessage(
-          `Bulk update completed. ${payload.length.toLocaleString()} records were updated in asynchronous batches.`,
-        );
+        api?.refreshInfiniteCache?.();
+        // The whole response is passed so rows skipped for a missing CURRENCY / FX rate are listed.
+        setMessage(bulkUpdateAllMessage(result));
       } catch (error) {
         setMessage(`Bulk update stopped: ${error.message}`);
       } finally {
@@ -1500,7 +1476,7 @@ export default function ForecastPage() {
             {totalRowCount.toLocaleString()} records
           </p>
         </div>
-        <div className="forecast-heading-actions">          
+        <div className="forecast-heading-actions">            
           <details
             className="view-selector"
             onToggle={(event) => setIsViewMenuOpen(event.currentTarget.open)}
@@ -1568,7 +1544,7 @@ export default function ForecastPage() {
                 ＋ Create New View
               </button>
             </div>
-          </details>                    
+          </details>                      
           <button
             aria-label="Download forecast"
             className="icon-action"
@@ -1852,7 +1828,7 @@ export default function ForecastPage() {
                 </button>
                 <button onClick={() => copyFromContextMenu(false)} role="menuitem" type="button">
                   Copy
-                </button>                        
+                </button>                          
                 <button onClick={pasteFromContextMenu} role="menuitem" type="button">
                   Paste
                 </button>
